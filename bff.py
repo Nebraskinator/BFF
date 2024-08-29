@@ -97,7 +97,7 @@ class Abiogenesis(object):
         if enter_mask.any():
             # Vectorized search for next `]`
             forward_search = self.tape[enter_loop].unsqueeze(1)  # Add dimension for broadcasting
-            exits_found = forward_search.gather(2, forward_offsets[enter_loop].unsqueeze(1)) == 15  # Find `]` in forward search
+            exits_found = forward_search.gather(2, forward_offsets[enter_loop].unsqueeze(1)) == 14  # Find `]` in forward search
             next_exits = exits_found.int().argmax(dim=2).squeeze(1).type(torch.uint8)  # Index of the first occurrence
             found_mask = exits_found.any(dim=2).squeeze(1)  # Check if any match found
             if (enter_mask & found_mask).any():
