@@ -308,8 +308,12 @@ class Abiogenesis(object):
         # Reshape the image array to the desired dimensions
         height, width, tape_len = self.tape.shape
         grid_size = int(np.sqrt(tape_len))
-        image_array = image_array.view(height * grid_size, width * grid_size, 3)
-    
+        # Each depthwise slice (tape_len) should correspond to a grid_size x grid_size block
+        image_array = image_array.view(height, width, grid_size, grid_size, 3)
+        
+        # Rearrange the blocks to form the correct 2D representation
+        # height * grid_size creates rows and width * grid_size creates columns of the tape
+        image_array = image_array.permute(0, 2, 1, 3, 4).contiguous().view(height * grid_size, width * grid_size, 3)    
         # Convert to numpy for saving with OpenCV
         image_array_np = image_array.numpy()
     
