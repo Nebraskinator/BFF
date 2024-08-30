@@ -110,12 +110,19 @@ class Abiogenesis(object):
                 found_mask = match_found.any(dim=2).squeeze(1)  # Check if any match found
     
                 # Update instruction pointers based on search results
-                if (loop_mask & found_mask).any():
-                    ip[indices_mask[loop_mask & found_mask]] = (
-                        masked_ip[loop_mask & found_mask] + match_indices[loop_mask & found_mask] - 1
+                combined_mask = loop_mask & found_mask
+                if combined_mask.any():
+                    # Get the nonzero indices in the context of the larger indices_mask
+                    idx_nonzero = indices_mask.nonzero(as_tuple=True)
+                    ip[idx_nonzero[0][combined_mask], idx_nonzero[1][combined_mask]] = (
+                        masked_ip[combined_mask] + match_indices[combined_mask] - 1
                     )
-                if (loop_mask & ~found_mask).any():
-                    ip[indices_mask[loop_mask & ~found_mask]] = -1  # Reset if no match found
+    
+                # Update when no match is found
+                no_match_mask = loop_mask & ~found_mask
+                if no_match_mask.any():
+                    idx_nonzero = indices_mask.nonzero(as_tuple=True)
+                    ip[idx_nonzero[0][no_match_mask], idx_nonzero[1][no_match_mask]] = -1 
 
 
     def iterate(self):
