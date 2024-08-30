@@ -117,7 +117,7 @@ class Abiogenesis(object):
                     # Get the nonzero indices in the context of the larger indices_mask
                     idx_nonzero = indices_mask.nonzero(as_tuple=True)
                     ip[idx_nonzero[0][combined_mask], idx_nonzero[1][combined_mask]] = (
-                        masked_ip[combined_mask] + match_indices[combined_mask] - 1
+                        masked_ip[combined_mask] + match_indices[combined_mask]
                     )
     
                 # Update when no match is found
@@ -170,8 +170,8 @@ class Abiogenesis(object):
         self.copy_tape_values(self.tape, copy_1_to_0, self.heads, src_head_index=1, dest_head_index=0)
         
         
-        forward_match_value = offset * 2 + 5
-        reverse_match_value = offset * 2 + 6        
+        forward_match_value = offset * 2 + 6
+        reverse_match_value = offset * 2 + 5        
         enter_loop = instructions == offset * 2 + 5  # Loop entry
         exit_loop = instructions == offset * 2 + 6   # Loop exit
         
@@ -207,7 +207,7 @@ class Abiogenesis(object):
                 masked_heads[:, 0, 2]                             # depth indices
             ] != 0),  # Mask for loop entry based on head value
             offset_matrix=backward_offsets,
-            match_value=reverse_match_value  # Matching value for the exit loop `]`
+            match_value=reverse_match_value  # Matching value for the enter loop `[`
         )
         
         # Update instruction pointer at the end
