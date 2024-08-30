@@ -12,11 +12,11 @@ import numpy as np
 num_sims = 1e7
 
 class Abiogenesis(object):
-    def __init__(self, height, width, tape_len, device='cpu'):
-        assert tape_len < 256
-        assert 256 % tape_len == 0
+    def __init__(self, height, width, tape_len, num_instructions=256, device='cpu'):
+        assert num_instructions <= 256
         self.device = device
-        self.tape = torch.randint(low=0, high=255, size=(height, width, tape_len), dtype=torch.uint8, device=device)
+        self.num_instructions = num_instructions
+        self.tape = torch.randint(low=0, high=num_instructions, size=(height, width, tape_len), dtype=torch.int32, device=device)
         self.ip = torch.zeros((height, width), device=device).long()
         self.heads = torch.zeros((height, width, 2, 3), dtype=torch.int64, device=device)
         self.move_instructions = self.generate_move_instructions()
@@ -68,6 +68,8 @@ class Abiogenesis(object):
                 tape[tape_indices, width_indices, depth_indices] -= 1
             elif operation == 'inc':
                 tape[tape_indices, width_indices, depth_indices] += 1
+                
+            tape[tape_indices, width_indices, depth_indices] %= self.num_instructions
 
     def copy_tape_values(self, tape, indices_mask, heads, src_head_index, dest_head_index):
         if indices_mask.any():
@@ -123,7 +125,6 @@ class Abiogenesis(object):
                 if no_match_mask.any():
                     idx_nonzero = indices_mask.nonzero(as_tuple=True)
                     ip[idx_nonzero[0][no_match_mask], idx_nonzero[1][no_match_mask]] = -1 
-
 
     def iterate(self):
         
@@ -204,7 +205,7 @@ class Abiogenesis(object):
                 masked_heads[:, 0, 0].clamp(0, tape_height - 1),  # height indices
                 masked_heads[:, 0, 1].clamp(0, tape_width - 1),   # width indices
                 masked_heads[:, 0, 2]                             # depth indices
-            ] == 0),  # Mask for loop entry based on head value
+            ] != 0),  # Mask for loop entry based on head value
             offset_matrix=backward_offsets,
             match_value=reverse_match_value  # Matching value for the exit loop `]`
         )
@@ -218,7 +219,7 @@ class Abiogenesis(object):
         # Count the number of mutations needed
         num_mutations = mutation_mask.sum()
         # Generate only the required number of random values
-        random_values = torch.randint(low=0, high=255, size=(num_mutations.item(),), dtype=torch.uint8, device=self.device)
+        random_values = torch.randint(low=0, high=self.num_instructions, size=(num_mutations.item(),), dtype=torch.int32, device=self.device)
         # Apply the random values to the tape at positions where the mutation mask is True
         self.tape[mutation_mask] = random_values
             
@@ -253,41 +254,31 @@ class Abiogenesis(object):
         
     def visualize(self, path):
         # Initialize a full color map with 256 colors, starting with shades of gray
-        instruction_colors = torch.zeros((256, 3), dtype=torch.uint8)  # Default to black
+        instruction_colors = torch.zeros((self.num_instructions, 3), dtype=torch.uint8)  # Default to black
+        # Define blue for head0 movements
+        head0_blue = torch.tensor([0, 0, 255], dtype=torch.uint8)
     
-        # Define shades of blue for head0 movements
-        head0_blue_shades = torch.tensor([
-            [0, 0, 255],    # Blue
-            [0, 64, 255],   # Medium Blue
-            [0, 128, 255],  # Light Blue
-            [0, 192, 255],  # Lighter Blue
-        ], dtype=torch.uint8)
-    
-        # Define shades of purple for head1 movements
-        head1_purple_shades = torch.tensor([
-            [128, 0, 128],  # Purple
-            [153, 50, 204], # Medium Purple
-            [75, 0, 130],   # Dark Purple
-            [148, 0, 211],  # Light Purple
-        ], dtype=torch.uint8)
+        # Define purple for head1 movements
+        head1_purple = torch.tensor([128, 0, 128], dtype=torch.uint8)
     
         # Split the move instructions for head0 and head1 based on how they were generated
         num_move_instructions = len(self.move_instructions)
         head0_indices = torch.arange(1, 1 + num_move_instructions)  # Starting at 1 for head0
         head1_indices = torch.arange(1 + num_move_instructions, 1 + 2 * num_move_instructions)  # Continuing for head1
     
-        # Assign colors to the move instructions for head0 and head1
-        instruction_colors[head0_indices] = head0_blue_shades.repeat((num_move_instructions // len(head0_blue_shades)) + 1, 1)[:num_move_instructions]
-        instruction_colors[head1_indices] = head1_purple_shades.repeat((num_move_instructions // len(head1_purple_shades)) + 1, 1)[:num_move_instructions]
+        # Assign blue color to all head0 move instructions
+        instruction_colors[head0_indices] = head0_blue
     
+        # Assign purple color to all head1 move instructions
+        instruction_colors[head1_indices] = head1_purple
         # Define remaining instruction colors
         remaining_instruction_colors = {
-            2 * num_move_instructions + 1: [255, 0, 0],      # Red for decrement
-            2 * num_move_instructions + 2: [0, 255, 0],      # Green for increment
-            2 * num_move_instructions + 3: [255, 165, 0],    # Orange for copy head0 to head1
-            2 * num_move_instructions + 4: [255, 140, 0],    # Dark Orange for copy head1 to head0
-            2 * num_move_instructions + 5: [255, 255, 0],    # Yellow for loop entry
-            2 * num_move_instructions + 6: [255, 255, 102],  # Light Yellow for loop exit
+            2 * num_move_instructions + 1: [255, 165, 0],    # Orange for decrement
+            2 * num_move_instructions + 2: [255, 165, 0],    # Orange for increment
+            2 * num_move_instructions + 3: [255, 255, 0],    # Yellow for copy head0 to head1
+            2 * num_move_instructions + 4: [255, 255, 0],    # Yellow for copy head1 to head0
+            2 * num_move_instructions + 5: [0, 255, 0],      # Green for loop entry
+            2 * num_move_instructions + 6: [255, 0, 0],      # Red for loop exit
         }
     
         # Assign colors for the remaining instructions
@@ -302,7 +293,7 @@ class Abiogenesis(object):
     
         # For non-instruction values (from index 2 * num_move_instructions + 7 onward), map them to shades of gray
         non_instruction_mask = flattened_tape >= 2 * num_move_instructions + 7
-        gray_values = flattened_tape[non_instruction_mask]
+        gray_values = flattened_tape[non_instruction_mask].to(torch.uint8)
         image_array[non_instruction_mask] = torch.stack([gray_values, gray_values, gray_values], dim=-1)
     
         # Reshape the image array to the desired dimensions
@@ -316,15 +307,15 @@ class Abiogenesis(object):
         image_array = image_array.permute(0, 2, 1, 3, 4).contiguous().view(height * grid_size, width * grid_size, 3)    
         # Convert to numpy for saving with OpenCV
         image_array_np = image_array.numpy()
-    
+        image_array_np = image_array_np[..., ::-1]
         # Save the image to disk using OpenCV
         cv2.imwrite(path, image_array_np)
                 
         
-env = Abiogenesis(128, 256, 64, device='cuda')
+env = Abiogenesis(128, 256, 144, num_instructions=64, device='cuda')
 for i in range(int(num_sims)):
     env.iterate()
-    if not i % 64:
+    if not i % 144:
         env.mutate(0.0001)
     if not i % 10000:
         print(f"iteration {i}")
