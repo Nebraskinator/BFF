@@ -13,7 +13,7 @@ num_sims = 1e7
 
 class Abiogenesis(object):
     def __init__(self, height, width, tape_len, num_instructions=256, device='cpu'):
-        assert num_instructions <= 256
+        assert tape_len**0.5 % 1 == 0
         self.device = device
         self.num_instructions = num_instructions
         self.tape = torch.randint(low=0, high=num_instructions, size=(height, width, tape_len), dtype=torch.int32, device=device)
@@ -59,8 +59,8 @@ class Abiogenesis(object):
             masked_heads = heads[indices_mask]
             
             # Calculate the indices for height, width, and depth based on the masked heads
-            tape_indices = torch.clamp((indices_mask.nonzero(as_tuple=True)[0] + masked_heads[:, 0, 0] - 1), 0, tape.shape[0] - 1)
-            width_indices = torch.clamp((indices_mask.nonzero(as_tuple=True)[1] + masked_heads[:, 0, 1] - 1), 0, tape.shape[1] - 1)
+            tape_indices = (indices_mask.nonzero(as_tuple=True)[0] + masked_heads[:, 0, 0] - 1) % tape.shape[0]
+            width_indices = (indices_mask.nonzero(as_tuple=True)[1] + masked_heads[:, 0, 1] - 1) % tape.shape[1]
             depth_indices = masked_heads[:, 0, 2]  # depth
     
             # Perform the specified operation on the masked positions
@@ -77,30 +77,29 @@ class Abiogenesis(object):
             masked_heads = heads[indices_mask]
     
             # Calculate source and destination indices for height, width, and depth
-            src_tape = torch.clamp((indices_mask.nonzero(as_tuple=True)[0] + masked_heads[:, src_head_index, 0] - 1), 0, tape.shape[0] - 1)  # height for source head
-            dest_tape = torch.clamp((indices_mask.nonzero(as_tuple=True)[0] + masked_heads[:, dest_head_index, 0] - 1), 0, tape.shape[0] - 1)  # height for destination head
-            src_width = torch.clamp((indices_mask.nonzero(as_tuple=True)[1] + masked_heads[:, src_head_index, 1] - 1), 0, tape.shape[1] - 1)   # width for source head
-            dest_width = torch.clamp((indices_mask.nonzero(as_tuple=True)[1] + masked_heads[:, dest_head_index, 1] - 1), 0, tape.shape[1] - 1)  # width for destination head
+            src_tape = (indices_mask.nonzero(as_tuple=True)[0] + masked_heads[:, src_head_index, 0] - 1) % tape.shape[0]  # height for source head
+            dest_tape = (indices_mask.nonzero(as_tuple=True)[0] + masked_heads[:, dest_head_index, 0] - 1) % tape.shape[0]  # height for destination head
+            src_width = (indices_mask.nonzero(as_tuple=True)[1] + masked_heads[:, src_head_index, 1] - 1) % tape.shape[1]   # width for source head
+            dest_width = (indices_mask.nonzero(as_tuple=True)[1] + masked_heads[:, dest_head_index, 1] - 1) % tape.shape[1]  # width for destination head
             src_depth = masked_heads[:, src_head_index, 2]  # depth for source head
             dest_depth = masked_heads[:, dest_head_index, 2]  # depth for destination head
     
             # Copy values from the source head to the destination head
             tape[dest_tape, dest_width, dest_depth] = tape[src_tape, src_width, src_depth]
 
-    def handle_loops(self, tape, indices_mask, heads, ip, loop_mask, offset_matrix, match_value):
+    def handle_loops(self, tape, indices_mask, heads, ip, loop_mask_condition, offset_matrix, match_value):
         if indices_mask.any():
             # Extract masked positions using the indices mask
             masked_heads = heads[indices_mask]
             masked_ip = ip[indices_mask]
     
-            # Calculate height, width, and depth indices
-            height_indices = torch.clamp(
-                indices_mask.nonzero(as_tuple=True)[0] + masked_heads[:, 0, 0] - 1, 0, tape.shape[0] - 1
-            )
-            width_indices = torch.clamp(
-                indices_mask.nonzero(as_tuple=True)[1] + masked_heads[:, 0, 1] - 1, 0, tape.shape[1] - 1
-            )
+            # Calculate absolute positions in the tape based on indices_mask and masked heads
+            height_indices = (indices_mask.nonzero(as_tuple=True)[0] + masked_heads[:, 0, 0] - 1) % tape.shape[0]
+            width_indices = (indices_mask.nonzero(as_tuple=True)[1] + masked_heads[:, 0, 1] - 1) % tape.shape[1]
             depth_indices = masked_heads[:, 0, 2]
+    
+            # Construct the loop mask based on the absolute positions and the loop condition
+            loop_mask = loop_mask_condition(tape[height_indices, width_indices, depth_indices])
     
             # Check loop condition based on the loop mask
             if loop_mask.any():
@@ -176,36 +175,24 @@ class Abiogenesis(object):
         exit_loop = instructions == offset * 2 + 6   # Loop exit
         
         # Generate forward and backward offset matrices for searching
-        tape_height = self.tape.shape[0]
-        tape_width = self.tape.shape[1]
         tape_depth = self.tape.shape[2]
         forward_offsets = (self.ip.unsqueeze(-1) + torch.arange(1, tape_depth, device=self.device).view(1, 1, -1)) % tape_depth
         backward_offsets = (self.ip.unsqueeze(-1) - torch.arange(1, tape_depth, device=self.device).view(1, 1, -1)) % tape_depth
-        masked_heads = self.heads[enter_loop]
         self.handle_loops(
             tape=self.tape,
             indices_mask=enter_loop,
             heads=self.heads,
             ip=self.ip,
-            loop_mask=(self.tape[
-                masked_heads[:, 0, 0].clamp(0, tape_height - 1),  # height indices
-                masked_heads[:, 0, 1].clamp(0, tape_width - 1),   # width indices
-                masked_heads[:, 0, 2]                             # depth indices
-            ] == 0),  # Mask for loop entry based on head value
+            loop_mask_condition=lambda x: x == 0,  # Mask for loop entry based on head value
             offset_matrix=forward_offsets,
             match_value=forward_match_value  # Matching value for the exit loop `]`
         )
-        masked_heads = self.heads[exit_loop]
         self.handle_loops(
             tape=self.tape,
             indices_mask=exit_loop,
             heads=self.heads,
             ip=self.ip,
-            loop_mask=(self.tape[
-                masked_heads[:, 0, 0].clamp(0, tape_height - 1),  # height indices
-                masked_heads[:, 0, 1].clamp(0, tape_width - 1),   # width indices
-                masked_heads[:, 0, 2]                             # depth indices
-            ] != 0),  # Mask for loop entry based on head value
+            loop_mask_condition=lambda x: x != 0,  # Mask for loop entry based on head value
             offset_matrix=backward_offsets,
             match_value=reverse_match_value  # Matching value for the enter loop `[`
         )
