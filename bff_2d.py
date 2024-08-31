@@ -86,44 +86,61 @@ class Abiogenesis(object):
     
             # Copy values from the source head to the destination head
             tape[dest_tape, dest_width, dest_depth] = tape[src_tape, src_width, src_depth]
-
-    def handle_loops(self, tape, indices_mask, heads, ip, loop_mask_condition, offset_matrix, match_value):
+                                    
+    def handle_loops(self, match_value, indices_mask, loop_condition, search_direction):
+        # Extract positions where the loop conditions are checked
         if indices_mask.any():
-            # Extract masked positions using the indices mask
-            masked_heads = heads[indices_mask]
-            masked_ip = ip[indices_mask]
-    
-            # Calculate absolute positions in the tape based on indices_mask and masked heads
-            height_indices = (indices_mask.nonzero(as_tuple=True)[0] + masked_heads[:, 0, 0] - 1) % tape.shape[0]
-            width_indices = (indices_mask.nonzero(as_tuple=True)[1] + masked_heads[:, 0, 1] - 1) % tape.shape[1]
+            # Extract positions
+            masked_heads = self.heads[indices_mask]
+            masked_ip = self.ip[indices_mask]
+            
+            # Calculate indices based on head positions
+            height_indices = (indices_mask.nonzero(as_tuple=True)[0] + masked_heads[:, 0, 0] - 1) % self.tape.shape[0]
+            width_indices = (indices_mask.nonzero(as_tuple=True)[1] + masked_heads[:, 0, 1] - 1) % self.tape.shape[1]
             depth_indices = masked_heads[:, 0, 2]
     
-            # Construct the loop mask based on the absolute positions and the loop condition
-            loop_mask = loop_mask_condition(tape[height_indices, width_indices, depth_indices])
+            # Apply the loop condition
+            loop_met = loop_condition(self.tape[height_indices, width_indices, depth_indices])
+            
+            # Find valid indices where loop condition is met
+            valid_indices = loop_met.nonzero(as_tuple=True)[0]
+            
+            if valid_indices.numel() > 0:
+                # Get search indices corresponding to the loop met condition
+                search_indices = (indices_mask.nonzero(as_tuple=True)[0][valid_indices], 
+                                  indices_mask.nonzero(as_tuple=True)[1][valid_indices])
+                
+                # Extract current instruction pointers for valid indices
+                valid_ips = masked_ip[valid_indices]
     
-            # Check loop condition based on the loop mask
-            if loop_mask.any():
-                # Perform a vectorized search for matching values
-                search_offsets = offset_matrix[indices_mask]
-                search_area = tape[height_indices, width_indices].unsqueeze(1)  # Add dimension for broadcasting
-                match_found = search_area.gather(2, search_offsets.unsqueeze(1)) == match_value
-                match_indices = match_found.int().argmax(dim=2).squeeze(1).type(torch.uint8)  # Index of the first occurrence
-                found_mask = match_found.any(dim=2).squeeze(1)  # Check if any match found
+                # Create the offset matrix based on search direction
+                tape_depth = self.tape.shape[2]
+                search_offsets = (valid_ips.unsqueeze(-1) + torch.arange(tape_depth, device=self.device) * search_direction) % tape_depth
     
-                # Update instruction pointers based on search results
-                combined_mask = loop_mask & found_mask
-                if combined_mask.any():
-                    # Get the nonzero indices in the context of the larger indices_mask
-                    idx_nonzero = indices_mask.nonzero(as_tuple=True)
-                    ip[idx_nonzero[0][combined_mask], idx_nonzero[1][combined_mask]] = (
-                        masked_ip[combined_mask] + match_indices[combined_mask]
-                    )
+                # Search for the match value across the entire depth dimension of the tape
+                search_area = self.tape[search_indices[0], search_indices[1], :]
+                match_found = (search_area == match_value)
+                
+                # Calculate distances using the search offsets
+                match_distances = torch.abs(search_offsets - valid_ips.unsqueeze(-1))
+                match_distances[~match_found] = tape_depth + 1  # Set large distance if no match is found
+                
+                # Find the closest matching index
+                closest_match_indices = match_distances.argmin(dim=-1)
     
-                # Update when no match is found
-                no_match_mask = loop_mask & ~found_mask
-                if no_match_mask.any():
-                    idx_nonzero = indices_mask.nonzero(as_tuple=True)
-                    ip[idx_nonzero[0][no_match_mask], idx_nonzero[1][no_match_mask]] = -1 
+                # Update the instruction pointer (ip) with the closest matching index
+                new_ips = (valid_ips + closest_match_indices).type(torch.long)
+                self.ip[search_indices[0], search_indices[1]] = new_ips
+    
+                # Debug: Verify the updated IP locations and corresponding instructions
+                '''
+                for h_idx, w_idx, d_idx in zip(search_indices[0], search_indices[1], new_ips):
+                    instruction = self.tape[h_idx, w_idx, d_idx % tape_depth]
+                    print(f"New IP Location: Height {h_idx}, Width {w_idx}, Depth {d_idx % tape_depth} - Instruction: {instruction.item()}")
+                '''
+                # Set IP to -1 where no match is found
+                no_match_mask = ~match_found.any(dim=-1)
+                self.ip[search_indices[0][no_match_mask], search_indices[1][no_match_mask]] = -1
 
     def iterate(self):
         
@@ -176,26 +193,8 @@ class Abiogenesis(object):
         
         # Generate forward and backward offset matrices for searching
         tape_depth = self.tape.shape[2]
-        forward_offsets = (self.ip.unsqueeze(-1) + torch.arange(1, tape_depth, device=self.device).view(1, 1, -1)) % tape_depth
-        backward_offsets = (self.ip.unsqueeze(-1) - torch.arange(1, tape_depth, device=self.device).view(1, 1, -1)) % tape_depth
-        self.handle_loops(
-            tape=self.tape,
-            indices_mask=enter_loop,
-            heads=self.heads,
-            ip=self.ip,
-            loop_mask_condition=lambda x: x == 0,  # Mask for loop entry based on head value
-            offset_matrix=forward_offsets,
-            match_value=forward_match_value  # Matching value for the exit loop `]`
-        )
-        self.handle_loops(
-            tape=self.tape,
-            indices_mask=exit_loop,
-            heads=self.heads,
-            ip=self.ip,
-            loop_mask_condition=lambda x: x != 0,  # Mask for loop entry based on head value
-            offset_matrix=backward_offsets,
-            match_value=reverse_match_value  # Matching value for the enter loop `[`
-        )
+        self.handle_loops(forward_match_value, enter_loop, lambda x: x == 0, 1)
+        self.handle_loops(reverse_match_value, exit_loop, lambda x: x != 0, -1)
         
         # Update instruction pointer at the end
         self.ip = (self.ip + 1) % tape_depth
