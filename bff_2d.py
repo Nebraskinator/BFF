@@ -23,7 +23,7 @@ class Abiogenesis(object):
 
     def generate_move_instructions(self):
         # Possible movements in each dimension: -1 (decrement), 0 (no change), 1 (increment)
-        movement_values = [-1, 0, 1]
+        movement_values = [-1, 1]
         
         # Initialize an empty list to store movement instructions
         move_instructions = {}
@@ -31,13 +31,15 @@ class Abiogenesis(object):
     
         # Nested loops to create all combinations of movements in three dimensions
         for x in movement_values:  # Height movement
-            for y in movement_values:  # Width movement
-                for z in movement_values:  # Depth movement
-                    # Exclude the (0, 0, 0) combination which represents no movement
-                    if (x, y, z) != (0, 0, 0):
-                        move_instructions[instruction_index] = [x, y, z]
-                        instruction_index += 1
-    
+            move_instructions[instruction_index] = [x, 0, 0]
+            instruction_index += 1
+        for x in movement_values:  # Height movement
+            move_instructions[instruction_index] = [0, x, 0]
+            instruction_index += 1
+        for x in movement_values:  # Height movement
+            move_instructions[instruction_index] = [0, 0, x]
+            instruction_index += 1
+                        
         return move_instructions
 
     def update_head_positions(self, heads, move_mask, head_index, movement):
@@ -48,27 +50,38 @@ class Abiogenesis(object):
             # Update each coordinate in the specified head_index
             masked_heads[:, head_index, 0] = (masked_heads[:, head_index, 0] + movement[0]) % 3  # height: cyclic in [0, 2]
             masked_heads[:, head_index, 1] = (masked_heads[:, head_index, 1] + movement[1]) % 3  # width: cyclic in [0, 2]
-            masked_heads[:, head_index, 2] = (masked_heads[:, head_index, 2] + movement[2]) % heads.shape[3]  # depth: full range
+            masked_heads[:, head_index, 2] = (masked_heads[:, head_index, 2] + movement[2]) % self.tape.shape[2]  # depth: full range
     
             # Reassign the modified masked_heads back to the correct positions
             heads[move_mask] = masked_heads
 
-    def update_tape(self, tape, indices_mask, heads, operation):
+    def update_tape(self, tape, indices_mask, heads, operation, head_index=0):
+        """
+        Updates the values on the tape based on the operation ('inc', 'dec', etc.) at the specified head position.
+    
+        Args:
+            tape (torch.Tensor): The 3D tape tensor where values are updated.
+            indices_mask (torch.Tensor): A mask indicating which tape positions to update.
+            heads (torch.Tensor): The positions of the heads in the tape.
+            operation (str): The operation to perform ('inc', 'dec', etc.).
+            head_index (int): The index of the head (0 for head0, 1 for head1).
+        """
         if indices_mask.any():
             # Extract masked positions using the indices mask
             masked_heads = heads[indices_mask]
             
-            # Calculate the indices for height, width, and depth based on the masked heads
-            tape_indices = (indices_mask.nonzero(as_tuple=True)[0] + masked_heads[:, 0, 0] - 1) % tape.shape[0]
-            width_indices = (indices_mask.nonzero(as_tuple=True)[1] + masked_heads[:, 0, 1] - 1) % tape.shape[1]
-            depth_indices = masked_heads[:, 0, 2]  # depth
-    
+            # Calculate indices for height, width, and depth based on the masked heads
+            tape_indices = (indices_mask.nonzero(as_tuple=True)[0] + masked_heads[:, head_index, 0] - 1) % tape.shape[0]
+            width_indices = (indices_mask.nonzero(as_tuple=True)[1] + masked_heads[:, head_index, 1] - 1) % tape.shape[1]
+            depth_indices = masked_heads[:, head_index, 2]  # depth
+        
             # Perform the specified operation on the masked positions
             if operation == 'dec':
                 tape[tape_indices, width_indices, depth_indices] -= 1
             elif operation == 'inc':
                 tape[tape_indices, width_indices, depth_indices] += 1
-                
+    
+            # Ensure values stay within the range [0, num_instructions)
             tape[tape_indices, width_indices, depth_indices] %= self.num_instructions
 
     def copy_tape_values(self, tape, indices_mask, heads, src_head_index, dest_head_index):
@@ -86,7 +99,59 @@ class Abiogenesis(object):
     
             # Copy values from the source head to the destination head
             tape[dest_tape, dest_width, dest_depth] = tape[src_tape, src_width, src_depth]
-                                    
+
+    def insert_tape_values(self, tape, indices_mask, heads, src_head_index, dest_head_index):
+        if indices_mask.any():
+            # Cache `nonzero` results
+            nonzero_indices = indices_mask.nonzero(as_tuple=True)
+            masked_heads = heads[indices_mask]
+    
+            # Calculate indices for height, width, and depth
+            src_tape = (nonzero_indices[0] + masked_heads[:, src_head_index, 0] - 1) % tape.shape[0]
+            dest_tape = (nonzero_indices[0] + masked_heads[:, dest_head_index, 0] - 1) % tape.shape[0]
+            src_width = (nonzero_indices[1] + masked_heads[:, src_head_index, 1] - 1) % tape.shape[1]
+            dest_width = (nonzero_indices[1] + masked_heads[:, dest_head_index, 1] - 1) % tape.shape[1]
+            src_depth = masked_heads[:, src_head_index, 2]
+            dest_depth = masked_heads[:, dest_head_index, 2]
+    
+            # Calculate slices with broadcasting, avoid `unsqueeze` wherever possible
+            max_shift = tape.shape[2] - dest_depth.max().item() - 1
+            source_slice = torch.arange(max_shift, device=tape.device).view(1, -1) + dest_depth.view(-1, 1)
+            dest_slice = source_slice + 1
+    
+            # Perform shift in place, minimizing tensor expansion
+            tape.index_put_(
+                (dest_tape.unsqueeze(-1), dest_width.unsqueeze(-1), dest_slice),
+                tape[dest_tape.unsqueeze(-1), dest_width.unsqueeze(-1), source_slice],
+                accumulate=False,
+            )
+            print(tape.shape)
+            # Insert the value from the source head to the destination head position
+            tape[dest_tape, dest_width, dest_depth] = tape[src_tape, src_width, src_depth]
+    
+    def delete_tape_values(self, tape, indices_mask, heads, head_index):
+        if indices_mask.any():
+            # Cache `nonzero` results
+            nonzero_indices = indices_mask.nonzero(as_tuple=True)
+            masked_heads = heads[indices_mask]
+    
+            # Calculate indices
+            tape_indices = (nonzero_indices[0] + masked_heads[:, head_index, 0] - 1) % tape.shape[0]
+            width_indices = (nonzero_indices[1] + masked_heads[:, head_index, 1] - 1) % tape.shape[1]
+            depth_indices = masked_heads[:, head_index, 2]
+    
+            # Create valid depth slices, reducing expansion
+            depth_range = torch.arange(tape.shape[2] - 1, device=tape.device)
+            depth_shifted = depth_range + depth_indices.unsqueeze(-1)
+    
+            # Ensure bounds and perform in-place delete operation
+            valid_depth_shifted = depth_shifted[depth_shifted < tape.shape[2] - 1]
+            tape.index_put_(
+                (tape_indices.unsqueeze(-1), width_indices.unsqueeze(-1), valid_depth_shifted),
+                tape[tape_indices.unsqueeze(-1), width_indices.unsqueeze(-1), valid_depth_shifted + 1],
+                accumulate=False,
+            )
+                                        
     def handle_loops(self, match_value, indices_mask, loop_condition, search_direction):
         # Extract positions where the loop conditions are checked
         if indices_mask.any():
@@ -173,11 +238,21 @@ class Abiogenesis(object):
         self.update_tape(self.tape, dec_tape, self.heads, operation='dec')
         
         # Increment tape values at positions specified by head0
-        self.update_tape(self.tape, inc_tape, self.heads, operation='inc')      
+        self.update_tape(self.tape, inc_tape, self.heads, operation='inc')   
+        
+        # Use the offset to determine instruction values for head1
+        dec_tape = instructions == offset * 2 + 3  # Decrement tape for head1
+        inc_tape = instructions == offset * 2 + 4  # Increment tape for head1
+        
+        # Decrement tape values at positions specified by head1
+        self.update_tape(self.tape, dec_tape, self.heads, operation='dec', head_index=1)
+        
+        # Increment tape values at positions specified by head1
+        self.update_tape(self.tape, inc_tape, self.heads, operation='inc', head_index=1)
         
         # Assign instruction values for copy operations
-        copy_0_to_1 = instructions == offset * 2 + 3  # Copy from head0 to head1
-        copy_1_to_0 = instructions == offset * 2 + 4  # Copy from head1 to head0
+        copy_0_to_1 = instructions == offset * 2 + 5  # Copy from head0 to head1
+        copy_1_to_0 = instructions == offset * 2 + 6  # Copy from head1 to head0
         
         # Perform copy from head0 to head1
         self.copy_tape_values(self.tape, copy_0_to_1, self.heads, src_head_index=0, dest_head_index=1)
@@ -185,11 +260,26 @@ class Abiogenesis(object):
         # Perform copy from head1 to head0
         self.copy_tape_values(self.tape, copy_1_to_0, self.heads, src_head_index=1, dest_head_index=0)
         
+        '''
+        # Insert operations
+        insert_0_to_1 = instructions == offset * 2 + 7  # Insert from head0 to head1
+        insert_1_to_0 = instructions == offset * 2 + 8  # Insert from head1 to head0
+    
+        self.insert_tape_values(self.tape, insert_0_to_1, self.heads, src_head_index=0, dest_head_index=1)
+        self.insert_tape_values(self.tape, insert_1_to_0, self.heads, src_head_index=1, dest_head_index=0)
+                
+        # Delete operations
+        delete_0 = instructions == offset * 2 + 9  # Delete at head0
+        delete_1 = instructions == offset * 2 + 10  # Delete at head1
+    
+        self.delete_tape_values(self.tape, delete_0, self.heads, head_index=0)
+        self.delete_tape_values(self.tape, delete_1, self.heads, head_index=1)        
+        '''
         
-        forward_match_value = offset * 2 + 6
-        reverse_match_value = offset * 2 + 5        
-        enter_loop = instructions == offset * 2 + 5  # Loop entry
-        exit_loop = instructions == offset * 2 + 6   # Loop exit
+        forward_match_value = offset * 2 + 12
+        reverse_match_value = offset * 2 + 11        
+        enter_loop = instructions == offset * 2 + 11  # Loop entry
+        exit_loop = instructions == offset * 2 + 12   # Loop exit
         
         # Generate forward and backward offset matrices for searching
         tape_depth = self.tape.shape[2]
@@ -261,10 +351,16 @@ class Abiogenesis(object):
         remaining_instruction_colors = {
             2 * num_move_instructions + 1: [255, 165, 0],    # Orange for decrement
             2 * num_move_instructions + 2: [255, 165, 0],    # Orange for increment
-            2 * num_move_instructions + 3: [255, 255, 0],    # Yellow for copy head0 to head1
-            2 * num_move_instructions + 4: [255, 255, 0],    # Yellow for copy head1 to head0
-            2 * num_move_instructions + 5: [0, 255, 0],      # Green for loop entry
-            2 * num_move_instructions + 6: [255, 0, 0],      # Red for loop exit
+            2 * num_move_instructions + 3: [255, 165, 0],    # Orange for decrement
+            2 * num_move_instructions + 4: [255, 165, 0],    # Orange for decrement
+            2 * num_move_instructions + 5: [255, 255, 0],    # Yellow for copy head0 to head0
+            2 * num_move_instructions + 6: [255, 255, 0],    # Yellow for copy head0 to head1
+            2 * num_move_instructions + 7: [0, 255, 0],      # Green for insert
+            2 * num_move_instructions + 8: [0, 255, 0],      # Green for insert
+            2 * num_move_instructions + 9: [255, 0, 0],      # Red for delete
+            2 * num_move_instructions + 10: [255, 0, 0],     # Red for delete
+            2 * num_move_instructions + 11: [135, 206, 250], # Light Blue for loop entry
+            2 * num_move_instructions + 12: [186, 85, 211],  # Light Purple for loop exit
         }
     
         # Assign colors for the remaining instructions
@@ -278,7 +374,7 @@ class Abiogenesis(object):
         image_array = instruction_colors[flattened_tape.long()]
     
         # For non-instruction values (from index 2 * num_move_instructions + 7 onward), map them to shades of gray
-        non_instruction_mask = flattened_tape >= 2 * num_move_instructions + 7
+        non_instruction_mask = flattened_tape >= 2 * num_move_instructions + 13
         gray_values = flattened_tape[non_instruction_mask].to(torch.uint8)
         image_array[non_instruction_mask] = torch.stack([gray_values, gray_values, gray_values], dim=-1)
     
@@ -298,7 +394,7 @@ class Abiogenesis(object):
         cv2.imwrite(path, image_array_np)
                 
         
-env = Abiogenesis(128, 256, 144, num_instructions=64, device='cuda')
+env = Abiogenesis(128, 256, 64, num_instructions=64, device='cuda')
 for i in range(int(num_sims)):
     env.iterate()
     if not i % 144:
