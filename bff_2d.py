@@ -9,8 +9,6 @@ import torch
 import cv2
 import numpy as np
 
-num_sims = 1e7
-
 class Abiogenesis(object):
     def __init__(self, height, width, tape_len, num_instructions=256, device='cpu', seed=False):
         assert tape_len**0.5 % 1 == 0
