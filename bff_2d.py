@@ -5,6 +5,8 @@ Created on Wed Aug 28 19:57:17 2024
 @author: ruhe
 """
 
+import os
+import argparse
 import torch
 import cv2
 import numpy as np
@@ -412,14 +414,44 @@ class Abiogenesis(object):
         image_array_np = image_array_np[..., ::-1]
         # Save the image to disk using OpenCV
         cv2.imwrite(path, image_array_np)
-                
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Run Abiogenesis simulation with customizable parameters.")
+    parser.add_argument('--height', type=int, default=128, help='Height of the tape (default: 128)')
+    parser.add_argument('--width', type=int, default=256, help='Width of the tape (default: 256)')
+    parser.add_argument('--depth', type=int, default=64, help='Depth of the tape (default: 64)')
+    parser.add_argument('--num_instructions', type=int, default=64, help='Number of instructions (default: 64)')
+    parser.add_argument('--device', type=str, default='cuda', choices=['cpu', 'cuda'], help='Device to run the simulation on (default: cuda)')
+    parser.add_argument('--num_sims', type=int, default=1000000, help='Number of simulation iterations (default: 1000000)')
+    parser.add_argument('--mutate_rate', type=float, default=0.0, help='Mutation rate (default: 0.0001)')
+    parser.add_argument('--results_path', type=str, default='results/run_0', help='Path to save results (default: results/run_0)')
+    parser.add_argument('--image_save_interval', type=int, default=500, help='Interval to save images (default: 500 iterations)')
+    parser.add_argument('--state_save_interval', type=int, default=100000, help='Interval to save states (default: 100000 iterations)')
+    return parser.parse_args()
+
+def main():
+    args = parse_arguments()
+
+    # Create the results path if it does not exist
+    os.makedirs(args.results_path, exist_ok=True)
+    img_path = os.path.join(args.results_path, 'img')
+    states_path = os.path.join(args.results_path, 'states')
+    os.makedirs(img_path, exist_ok=True)
+    os.makedirs(states_path, exist_ok=True)
+
+    # Initialize the environment
+    env = Abiogenesis(args.height, args.width, args.depth, num_instructions=args.num_instructions, device=args.device)
+
+    # Run the simulation
+    for i in range(args.num_sims):
+        env.iterate()
+        if args.mutate_rate and not i % args.depth:
+             env.mutate(args.mutate_rate)
+        if not i % args.image_save_interval:
+            print(f"Iteration {i}")
+            env.visualize(os.path.join(img_path, f'{i:09}.png'))
+        if not i % args.state_save_interval:
+            env.save(os.path.join(states_path, f'{i:09}.p'))               
         
-env = Abiogenesis(128, 256, 64, num_instructions=64, device='cuda', seed=True)
-for i in range(int(num_sims)):
-    env.iterate()
-    #if not i % 144:
-        #env.mutate(0.0001)
-    if not i % 10000:
-        print(f"iteration {i}")
-        env.save(rf'D:\BFF\results\{i}.p')
-        env.visualize(rf'D:\BFF\results\{i}.png')
+if __name__ == "__main__":
+    main()
