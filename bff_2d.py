@@ -207,16 +207,15 @@ class Abiogenesis(object):
                 match_distances[~match_found] = tape_depth + 1  # Penalize non-matches
     
                 # Find the closest match
-                closest_match_indices = match_distances.argmin(dim=-1)
+                new_ips = match_distances.argmin(dim=-1).type(torch.long)
     
                 # Determine if the closest match is valid based on the search direction
                 if search_direction == 1:  # Forward search
-                    invalid_matches = match_distances[torch.arange(len(closest_match_indices)), closest_match_indices] >= (tape_depth - valid_ips)
+                    invalid_matches = match_distances[torch.arange(len(new_ips)), new_ips] >= (tape_depth - valid_ips)
                 else:  # Backward search
-                    invalid_matches = match_distances[torch.arange(len(closest_match_indices)), closest_match_indices] > valid_ips
+                    invalid_matches = match_distances[torch.arange(len(new_ips)), new_ips] > valid_ips
     
                 # Set invalid matches to -1
-                new_ips = closest_match_indices.clone().type(torch.long)
                 new_ips[invalid_matches] = -1
     
                 # Update the instruction pointer (ip) with the closest matching index directly
