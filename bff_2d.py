@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Created on Wed Aug 28 19:57:17 2024
-
-@author: ruhe
 """
 
 import os
