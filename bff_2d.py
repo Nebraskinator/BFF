@@ -23,10 +23,7 @@ class Abiogenesis(object):
         self.move_instructions = self.generate_move_instructions()
         if seed:
             replicator_template = self.generate_replicator_template()
-            self.tape[0, 0] = replicator_template.clone()
-            self.tape[-1, -1] = replicator_template.clone()
-            self.tape[0, -1] = replicator_template.clone()
-            self.tape[-1, 0] = replicator_template.clone()
+            self.tape[::3, -1] = replicator_template.clone()
             
 
     def generate_move_instructions(self):
@@ -53,12 +50,12 @@ class Abiogenesis(object):
     def generate_replicator_template(self):
         offset = len(self.move_instructions)
         replicator = torch.zeros(self.tape.shape[2]) + self.num_instructions - 3
-        replicator[2] = offset + 3 # shift head1 in dim 1
-        replicator[3] = offset * 2 + 11 # enter loop
-        replicator[4] = offset * 2 + 5 # copy head0 to head1
-        replicator[5] = offset # increment head0 dim 2
-        replicator[6] = offset * 2 # increment head1 dim 2
-        replicator[7] = offset * 2  + 12 # exit loop
+        replicator[4] = offset + 3 # shift head1 in dim 1
+        replicator[8] = offset * 2 + 11 # enter loop
+        replicator[12] = offset * 2 + 5 # copy head0 to head1
+        replicator[16] = offset # increment head0 dim 2
+        replicator[20] = offset * 2 # increment head1 dim 2
+        replicator[24] = offset * 2  + 12 # exit loop
         return replicator
         
         
@@ -417,11 +414,11 @@ class Abiogenesis(object):
         cv2.imwrite(path, image_array_np)
                 
         
-env = Abiogenesis(128, 256, 64, num_instructions=64, device='cuda')
+env = Abiogenesis(128, 256, 64, num_instructions=64, device='cuda', seed=True)
 for i in range(int(num_sims)):
     env.iterate()
-    if not i % 144:
-        env.mutate(0.0001)
+    #if not i % 144:
+        #env.mutate(0.0001)
     if not i % 10000:
         print(f"iteration {i}")
         env.save(rf'D:\BFF\results\{i}.p')
