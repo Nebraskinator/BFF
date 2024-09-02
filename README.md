@@ -2,6 +2,10 @@
 
 This simulation models an abiogenetic process using a grid-based tape system with complex rule sets for head movement, tape modification, and loop handling. The simulation runs iteratively, with options for saving state and visualizations at specified intervals.
 
+Emergence of self-replicating instruction sequences: [video](https://www.youtube.com/watch?v=JuRzMX985mw)
+
+Project inspired by [BFF Family](https://arxiv.org/pdf/2406.19108) simulations
+
 ## Requirements
 
 - Python 3.x
