@@ -417,7 +417,7 @@ def parse_arguments():
     parser.add_argument('--depth', type=int, default=64, help='Depth of the tape (default: 64)')
     parser.add_argument('--num_instructions', type=int, default=64, help='Number of instructions (default: 64)')
     parser.add_argument('--device', type=str, default='cuda', choices=['cpu', 'cuda'], help='Device to run the simulation on (default: cuda)')
-    parser.add_argument('--num_sims', type=int, default=1e7, help='Number of simulation iterations (default: 1e7)')
+    parser.add_argument('--num_sims', type=int, default=int(1e7), help='Number of simulation iterations (default: 1e7)')
     parser.add_argument('--mutate_rate', type=float, default=0.0, help='Mutation rate (default: 0.0)')
     parser.add_argument('--results_path', type=str, default='results/run_0', help='Path to save results (default: results/run_0)')
     parser.add_argument('--image_save_interval', type=int, default=500, help='Interval to save images (default: 500 iterations)')
