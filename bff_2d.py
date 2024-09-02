@@ -297,27 +297,36 @@ class Abiogenesis(object):
         search_indices = (exit_valid_indices[0], exit_valid_indices[1])
         search_area = self.tape[search_indices[0], search_indices[1]]
     
-        # Find enter and exit positions within the search area
-        enter_positions = search_area == enter_loop_instruction_value
-        exit_positions = search_area == exit_loop_instruction_value
+        flipped_search_area = search_area.flip(dims=[1])
     
-        # Compute the cumulative sum to track nesting levels
-        nesting_levels = torch.cumsum(enter_positions.int() - exit_positions.int(), dim=1)
+        # Find enter and exit positions within the flipped search area
+        enter_positions = flipped_search_area == enter_loop_instruction_value
+        exit_positions = flipped_search_area == exit_loop_instruction_value
     
-        # Identify the depths of valid exit positions
-        exit_depths = self.ip[search_indices]
-        
+        # Compute the cumulative sum to track nesting levels in the flipped search area
+        nesting_levels = torch.cumsum(exit_positions.int() - enter_positions.int(), dim=1)
+    
+        # Identify the depths of valid exit positions and adjust for flipped indices
+        exit_depths = self.tape.shape[2] - self.ip[search_indices] - 1
+    
         # Match enter positions with correct nesting level conditions
-        valid_matches = (torch.arange(self.tape.shape[2], device=self.device).unsqueeze(0) < exit_depths.unsqueeze(1)) & \
-                        (nesting_levels == (nesting_levels[torch.arange(len(exit_depths)), exit_depths].unsqueeze(1) + 1))
+        valid_matches = (torch.arange(self.tape.shape[2], device=self.device).unsqueeze(0) > exit_depths.unsqueeze(1)) & \
+                        (nesting_levels == (nesting_levels[torch.arange(len(exit_depths)), exit_depths].unsqueeze(1) - 1))
+    
+        # Ensure matches point only to enter loop positions
         valid_matches = valid_matches * enter_positions
-        # Get the first valid enter match for backward search
+    
+        # Get the first valid enter match for the flipped backward search
         first_enter_indices = valid_matches.int().argmax(dim=1)
+        
         # Identify positions where first_enter_indices points to zero
         zero_indices = first_enter_indices == 0
         
         # Check if these zero positions actually correspond to the correct enter loop instruction
-        zero_valid = enter_positions[:, 0]
+        zero_valid = enter_positions[:, -1]
+        
+        # Convert the matched indices back to the original depth dimension
+        first_enter_indices = self.tape.shape[2] - first_enter_indices - 1
         
         # Update the invalid matches: set to -1 where the zero index does not correspond to a valid enter loop instruction
         first_enter_indices[zero_indices & ~zero_valid] = -1
