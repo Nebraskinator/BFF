@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 class Abiogenesis(object):
-    def __init__(self, height, width, tape_len, num_instructions=256, device='cpu', seed=False):
+    def __init__(self, height, width, tape_len, num_instructions=256, device='cpu'):
         assert tape_len**0.5 % 1 == 0
         self.device = device
         self.num_instructions = num_instructions
@@ -18,32 +18,61 @@ class Abiogenesis(object):
         self.ip = torch.zeros((height, width), device=device).long()
         self.heads = torch.ones((height, width, 2, 3), dtype=torch.int64, device=device)
         self.heads[:, :, :, -1] = 0
-        self.move_instructions = self.generate_move_instructions()
-        if seed:
-            replicator_template = self.generate_replicator_template()
-            self.tape[::3, -1] = replicator_template.clone()
+        self.generate_instruction_sets()
             
 
-    def generate_move_instructions(self):
-        # Possible movements in each dimension: -1 (decrement), 0 (no change), 1 (increment)
-        movement_values = [-1, 1]
+    def generate_instruction_sets(self):             
+        instruction_set = {}
+        color_set = {0 : [0, 0, 0]}
+        instruction_value = 1
+        instruction_set[instruction_value] = (self.handle_forward_loops, {'enter_loop_instruction_value' : instruction_value, 
+                                                          'exit_loop_instruction_value' : instruction_value+1,
+                                                          'enter_loop_condition' : lambda x: x == 0,
+                                                          'debug' : False})
+        color_set[instruction_value] = [0, 255, 0]
+        instruction_value += 1
+        instruction_set[instruction_value] = (self.handle_backward_loops, {'exit_loop_instruction_value' : instruction_value, 
+                                                          'enter_loop_instruction_value' : instruction_value-1,
+                                                          'exit_loop_condition' : lambda x: x != 0,
+                                                          'debug' : False})
+        color_set[instruction_value] = [255, 0, 0]
+        instruction_value += 1
         
-        # Initialize an empty list to store movement instructions
-        move_instructions = {}
-        instruction_index = 1
-    
-        # Nested loops to create all combinations of movements in three dimensions
-        for x in movement_values:  # Height movement
-            move_instructions[instruction_index] = [x, 0, 0]
-            instruction_index += 1
-        for x in movement_values:  # Height movement
-            move_instructions[instruction_index] = [0, x, 0]
-            instruction_index += 1
-        for x in movement_values:  # Height movement
-            move_instructions[instruction_index] = [0, 0, x]
-            instruction_index += 1
-                        
-        return move_instructions
+        for head_index in [0, 1]:
+            for dim in [0, 1, 2]:
+                for direction in [-1, 1]:
+                    instruction_set[instruction_value] = (self.update_head_positions, {'instruction_value' : instruction_value, 
+                                                                      'head_index' : head_index,
+                                                                      'dim' : dim,
+                                                                      'direction' : direction})
+                    color_set[instruction_value] = [0, 255, 255] if not head_index else [0, 0, 255]
+                    instruction_value += 1
+        
+        for head_index in [0, 1]:
+            for increment in [-1, 1]:
+                instruction_set[instruction_value] = (self.update_tape, {'instruction_value' : instruction_value,
+                                                                         'head_index' : head_index, 
+                                                                         'increment' : increment})
+                color_set[instruction_value] = [255, 153, 153] if increment == -1 else [153, 255, 153]
+                instruction_value += 1
+       
+        instruction_set[instruction_value] = (self.copy_tape_values, {'instruction_value' : instruction_value,
+                                                                 'src_head_index' : 0, 
+                                                                 'dest_head_index' : 1})
+        color_set[instruction_value] = [255, 255, 0]
+        instruction_value += 1
+        instruction_set[instruction_value] = (self.copy_tape_values, {'instruction_value' : instruction_value,
+                                                                 'src_head_index' : 1, 
+                                                                 'dest_head_index' : 0})
+        color_set[instruction_value] = [255, 0, 255]
+        instruction_value += 1
+        
+        self.instruction_set = instruction_set
+        self.color_set = torch.linspace(0, 255, self.num_instructions, dtype=torch.uint8)
+        self.color_set = self.color_set.unsqueeze(1).repeat(1, 3)
+        for instr, color in color_set.items():
+            self.color_set[instr] = torch.tensor(color, dtype=torch.uint8)
+        
 
     def generate_replicator_template(self):
         offset = len(self.move_instructions)
@@ -57,64 +86,64 @@ class Abiogenesis(object):
         return replicator
         
         
-    def update_head_positions(self, heads, move_mask, head_index, movement):
-        if move_mask.any():
+    def update_head_positions(self, instructions,  **kwargs):
+        instruction_value = kwargs.get('instruction_value')
+        head_index = kwargs.get('head_index')
+        dim = kwargs.get('dim')
+        direction = kwargs.get('direction')
+        mask = instructions == instruction_value
+        if mask.any():
             # Extract a reduced version of heads using the move_mask
-            masked_heads = heads[move_mask]
-            
+            masked_heads = self.heads[mask]
+            mod = self.tape.shape[2] if dim == 2 else 3
             # Update each coordinate in the specified head_index
-            masked_heads[:, head_index, 0] = (masked_heads[:, head_index, 0] + movement[0]) % 3  # height: cyclic in [0, 2]
-            masked_heads[:, head_index, 1] = (masked_heads[:, head_index, 1] + movement[1]) % 3  # width: cyclic in [0, 2]
-            masked_heads[:, head_index, 2] = (masked_heads[:, head_index, 2] + movement[2]) % self.tape.shape[2]  # depth: full range
-    
-            # Reassign the modified masked_heads back to the correct positions
-            heads[move_mask] = masked_heads
+            masked_heads[:, head_index, dim] += direction
+            masked_heads[:, head_index, dim] %= mod
 
-    def update_tape(self, tape, indices_mask, heads, operation, head_index=0):
-        """
-        Updates the values on the tape based on the operation ('inc', 'dec', etc.) at the specified head position.
-    
-        Args:
-            tape (torch.Tensor): The 3D tape tensor where values are updated.
-            indices_mask (torch.Tensor): A mask indicating which tape positions to update.
-            heads (torch.Tensor): The positions of the heads in the tape.
-            operation (str): The operation to perform ('inc', 'dec', etc.).
-            head_index (int): The index of the head (0 for head0, 1 for head1).
-        """
-        if indices_mask.any():
+            # Reassign the modified masked_heads back to the correct positions
+            self.heads[mask] = masked_heads
+
+    def update_tape(self, instructions, **kwargs):
+        instruction_value = kwargs.get('instruction_value')
+        head_index = kwargs.get('head_index')
+        increment = kwargs.get('increment')
+
+        mask = instructions == instruction_value
+        if mask.any():
             # Extract masked positions using the indices mask
-            masked_heads = heads[indices_mask]
+            masked_heads = self.heads[mask]
             
             # Calculate indices for height, width, and depth based on the masked heads
-            tape_indices = (indices_mask.nonzero(as_tuple=True)[0] + masked_heads[:, head_index, 0] - 1) % tape.shape[0]
-            width_indices = (indices_mask.nonzero(as_tuple=True)[1] + masked_heads[:, head_index, 1] - 1) % tape.shape[1]
+            height_indices = (mask.nonzero(as_tuple=True)[0] + masked_heads[:, head_index, 0] - 1) % self.tape.shape[0]
+            width_indices = (mask.nonzero(as_tuple=True)[1] + masked_heads[:, head_index, 1] - 1) % self.tape.shape[1]
             depth_indices = masked_heads[:, head_index, 2]  # depth
         
-            # Perform the specified operation on the masked positions
-            if operation == 'dec':
-                tape[tape_indices, width_indices, depth_indices] -= 1
-            elif operation == 'inc':
-                tape[tape_indices, width_indices, depth_indices] += 1
+            self.tape[height_indices, width_indices, depth_indices] += increment
     
             # Ensure values stay within the range [0, num_instructions)
-            tape[tape_indices, width_indices, depth_indices] %= self.num_instructions
+            self.tape[height_indices, width_indices, depth_indices] %= self.num_instructions
 
-    def copy_tape_values(self, tape, indices_mask, heads, src_head_index, dest_head_index):
-        if indices_mask.any():
+    def copy_tape_values(self, instructions, **kwargs):
+        instruction_value = kwargs.get('instruction_value')
+        src_head_index = kwargs.get('src_head_index')
+        dest_head_index = kwargs.get('dest_head_index')
+        mask = instructions == instruction_value
+        if mask.any():
             # Extract masked positions using the indices mask
-            masked_heads = heads[indices_mask]
+            masked_heads = self.heads[mask]
     
             # Calculate source and destination indices for height, width, and depth
-            src_tape = (indices_mask.nonzero(as_tuple=True)[0] + masked_heads[:, src_head_index, 0] - 1) % tape.shape[0]  # height for source head
-            dest_tape = (indices_mask.nonzero(as_tuple=True)[0] + masked_heads[:, dest_head_index, 0] - 1) % tape.shape[0]  # height for destination head
-            src_width = (indices_mask.nonzero(as_tuple=True)[1] + masked_heads[:, src_head_index, 1] - 1) % tape.shape[1]   # width for source head
-            dest_width = (indices_mask.nonzero(as_tuple=True)[1] + masked_heads[:, dest_head_index, 1] - 1) % tape.shape[1]  # width for destination head
+            src_height = (mask.nonzero(as_tuple=True)[0] + masked_heads[:, src_head_index, 0] - 1) % self.tape.shape[0]  # height for source head
+            dest_height = (mask.nonzero(as_tuple=True)[0] + masked_heads[:, dest_head_index, 0] - 1) % self.tape.shape[0]  # height for destination head
+            src_width = (mask.nonzero(as_tuple=True)[1] + masked_heads[:, src_head_index, 1] - 1) % self.tape.shape[1]   # width for source head
+            dest_width = (mask.nonzero(as_tuple=True)[1] + masked_heads[:, dest_head_index, 1] - 1) % self.tape.shape[1]  # width for destination head
             src_depth = masked_heads[:, src_head_index, 2]  # depth for source head
             dest_depth = masked_heads[:, dest_head_index, 2]  # depth for destination head
     
             # Copy values from the source head to the destination head
-            tape[dest_tape, dest_width, dest_depth] = tape[src_tape, src_width, src_depth]
+            self.tape[dest_height, dest_width, dest_depth] = self.tape[src_height, src_width, src_depth]
 
+    # not working!
     def insert_tape_values(self, tape, indices_mask, heads, src_head_index, dest_head_index):
         if indices_mask.any():
             # Cache `nonzero` results
@@ -144,6 +173,7 @@ class Abiogenesis(object):
             # Insert the value from the source head to the destination head position
             tape[dest_tape, dest_width, dest_depth] = tape[src_tape, src_width, src_depth]
     
+    # not working!
     def delete_tape_values(self, tape, indices_mask, heads, head_index):
         if indices_mask.any():
             # Cache `nonzero` results
@@ -166,65 +196,144 @@ class Abiogenesis(object):
                 tape[tape_indices.unsqueeze(-1), width_indices.unsqueeze(-1), valid_depth_shifted + 1],
                 accumulate=False,
             )
-                                                    
-    def handle_loops(self, match_value, indices_mask, loop_condition, search_direction):
-        # Extract positions where the loop conditions are checked
-        if indices_mask.any():
-            # Extract positions
-            masked_heads = self.heads[indices_mask]
-            masked_ip = self.ip[indices_mask]
             
-            # Calculate indices based on head positions
-            nonzero_indices = indices_mask.nonzero(as_tuple=True)
-            height_indices = (nonzero_indices[0] + masked_heads[:, 0, 0] - 1) % self.tape.shape[0]
-            width_indices = (nonzero_indices[1] + masked_heads[:, 0, 1] - 1) % self.tape.shape[1]
-            depth_indices = masked_heads[:, 0, 2]
+    def handle_forward_loops(self, instructions, **kwargs):
+        enter_loop_instruction_value = kwargs.get('enter_loop_instruction_value')
+        exit_loop_instruction_value = kwargs.get('exit_loop_instruction_value')
+        enter_loop_condition = kwargs.get('enter_loop_condition')
+        debug = kwargs.get('debug')
+        # Create mask for enter loop instructions
+        enter_mask = instructions == enter_loop_instruction_value
+        
+        if not enter_mask.any():
+            return  # Exit early if no enter instructions are found
     
-            # Apply the loop condition to the extracted head positions
-            loop_met = loop_condition(self.tape[height_indices, width_indices, depth_indices])
-            valid_indices = loop_met.nonzero(as_tuple=True)[0]
+        # Extract the indices based on head positions for enter mask
+        enter_indices = enter_mask.nonzero(as_tuple=True)
+        enter_heads = self.heads[enter_indices]
     
-            if valid_indices.numel() > 0:
-                # Get search indices corresponding to the loop met condition
-                search_indices = (nonzero_indices[0][valid_indices], nonzero_indices[1][valid_indices])
-                valid_ips = masked_ip[valid_indices]
-                tape_depth = self.tape.shape[2]
+        # Calculate indices based on head positions for enter conditions
+        enter_height_indices = (enter_indices[0] + enter_heads[:, 0, 0] - 1) % self.tape.shape[0]
+        enter_width_indices = (enter_indices[1] + enter_heads[:, 0, 1] - 1) % self.tape.shape[1]
+        enter_depth_indices = enter_heads[:, 0, 2]
     
-                # Create offset search matrix
-                search_offsets = (valid_ips.unsqueeze(-1) + torch.arange(tape_depth, device=self.device) * search_direction) % tape_depth
-                search_area = self.tape[search_indices[0], search_indices[1], :]
+        # Check loop conditions at the head positions
+        enter_condition_met = enter_loop_condition(self.tape[enter_height_indices, enter_width_indices, enter_depth_indices])
     
-                # Find the match positions
-                match_found = (search_area == match_value)
+        # Filter the positions where enter conditions are met
+        valid_enter_positions = enter_mask.clone()
+        valid_enter_positions[enter_indices] = enter_condition_met
     
-                # Calculate distances and penalize unmatched positions
-                match_distances = torch.abs(search_offsets - valid_ips.unsqueeze(-1))
-                match_distances[~match_found] = tape_depth + 1  # Penalize non-matches
+        if not valid_enter_positions.any():
+            return  # Exit early if no valid enter conditions are met
     
-                # Find the closest match
-                new_ips = match_distances.argmin(dim=-1).type(torch.long)
+        # Extract indices for valid enter conditions
+        enter_valid_indices = valid_enter_positions.nonzero(as_tuple=True)
+        search_indices = (enter_valid_indices[0], enter_valid_indices[1])
+        search_area = self.tape[search_indices[0], search_indices[1]]
     
-                # Determine if the closest match is valid based on the search direction
-                if search_direction == 1:  # Forward search
-                    invalid_matches = match_distances[torch.arange(len(new_ips)), new_ips] >= (tape_depth - valid_ips)
-                else:  # Backward search
-                    invalid_matches = match_distances[torch.arange(len(new_ips)), new_ips] > valid_ips
+        # Find enter and exit positions within the search area
+        enter_positions = search_area == enter_loop_instruction_value
+        exit_positions = search_area == exit_loop_instruction_value
     
-                # Set invalid matches to -1
-                new_ips[invalid_matches] = -1
+        # Compute the cumulative sum to track nesting levels
+        nesting_levels = torch.cumsum(enter_positions.int() - exit_positions.int(), dim=1)
     
-                # Update the instruction pointer (ip) with the closest matching index directly
-                self.ip[search_indices[0], search_indices[1]] = new_ips
-                '''
-                # Debug: Verify the updated IP locations and corresponding instructions
-                for h_idx, w_idx, d_idx in zip(search_indices[0], search_indices[1], new_ips):
-                    if d_idx != -1:  # Check if the new IP is valid
-                        instruction = self.tape[h_idx, w_idx, d_idx % tape_depth]
-                        print(f"New IP Location: Direction {search_direction} Height {h_idx}, Width {w_idx}, Depth {d_idx % tape_depth} - Instruction: {instruction.item()}")
-                    else:
-                        print(f"No valid match found for Height {h_idx}, Width {w_idx}. IP set to -1.")
-                '''
-                
+        # Identify the depths of valid enter positions
+        enter_depths = self.ip[search_indices]
+        # Match exit positions with correct nesting level conditions
+        valid_matches = (torch.arange(self.tape.shape[2], device=self.device).unsqueeze(0) > enter_depths.unsqueeze(1)) & \
+                        (nesting_levels == (nesting_levels[torch.arange(len(enter_depths)), enter_depths].unsqueeze(1) - 1))
+        valid_matches = valid_matches * exit_positions
+        # Get the first valid exit match
+        first_exit_indices = valid_matches.int().argmax(dim=1)
+        invalid_forward_matches = first_exit_indices == 0
+        first_exit_indices[invalid_forward_matches] = -1
+    
+        # Update IPs based on valid forward matches
+        self.ip[search_indices[0], search_indices[1]] = first_exit_indices
+        
+        # Debug: Verify the updated IP locations and corresponding instructions
+        if debug:
+            for h_idx, w_idx, d_idx in zip(search_indices[0], search_indices[1], first_exit_indices):
+                if d_idx != -1:  # Check if the new IP is valid
+                    instruction = self.tape[h_idx, w_idx, d_idx]
+                    print(f"New IP Location (Forward): Height {h_idx}, Width {w_idx}, Depth {d_idx} - Instruction: {instruction.item()}")
+                else:
+                    print(f"No valid forward match found for Height {h_idx}, Width {w_idx}. IP set to -1.")
+    
+    def handle_backward_loops(self, instructions, **kwargs):
+        enter_loop_instruction_value = kwargs.get('enter_loop_instruction_value')
+        exit_loop_instruction_value = kwargs.get('exit_loop_instruction_value')
+        exit_loop_condition = kwargs.get('exit_loop_condition')
+        debug = kwargs.get('debug')
+        # Create mask for exit loop instructions
+        exit_mask = instructions == exit_loop_instruction_value
+    
+        if not exit_mask.any():
+            return  # Exit early if no exit instructions are found
+    
+        # Extract the indices based on head positions for exit mask
+        exit_indices = exit_mask.nonzero(as_tuple=True)
+        exit_heads = self.heads[exit_indices]
+    
+        # Calculate indices based on head positions for exit conditions
+        exit_height_indices = (exit_indices[0] + exit_heads[:, 0, 0] - 1) % self.tape.shape[0]
+        exit_width_indices = (exit_indices[1] + exit_heads[:, 0, 1] - 1) % self.tape.shape[1]
+        exit_depth_indices = exit_heads[:, 0, 2]
+    
+        # Check loop conditions at the head positions
+        exit_condition_met = exit_loop_condition(self.tape[exit_height_indices, exit_width_indices, exit_depth_indices])
+    
+        # Filter the positions where exit conditions are met
+        valid_exit_positions = exit_mask.clone()
+        valid_exit_positions[exit_indices] = exit_condition_met
+    
+        if not valid_exit_positions.any():
+            return  # Exit early if no valid exit conditions are met
+    
+        # Extract indices for valid exit conditions
+        exit_valid_indices = valid_exit_positions.nonzero(as_tuple=True)
+        search_indices = (exit_valid_indices[0], exit_valid_indices[1])
+        search_area = self.tape[search_indices[0], search_indices[1]]
+    
+        # Find enter and exit positions within the search area
+        enter_positions = search_area == enter_loop_instruction_value
+        exit_positions = search_area == exit_loop_instruction_value
+    
+        # Compute the cumulative sum to track nesting levels
+        nesting_levels = torch.cumsum(enter_positions.int() - exit_positions.int(), dim=1)
+    
+        # Identify the depths of valid exit positions
+        exit_depths = self.ip[search_indices]
+        
+        # Match enter positions with correct nesting level conditions
+        valid_matches = (torch.arange(self.tape.shape[2], device=self.device).unsqueeze(0) < exit_depths.unsqueeze(1)) & \
+                        (nesting_levels == (nesting_levels[torch.arange(len(exit_depths)), exit_depths].unsqueeze(1) + 1))
+        valid_matches = valid_matches * enter_positions
+        # Get the first valid enter match for backward search
+        first_enter_indices = valid_matches.int().argmax(dim=1)
+        # Identify positions where first_enter_indices points to zero
+        zero_indices = first_enter_indices == 0
+        
+        # Check if these zero positions actually correspond to the correct enter loop instruction
+        zero_valid = enter_positions[:, 0]
+        
+        # Update the invalid matches: set to -1 where the zero index does not correspond to a valid enter loop instruction
+        first_enter_indices[zero_indices & ~zero_valid] = -1
+    
+        # Update IPs based on valid backward matches
+        self.ip[search_indices[0], search_indices[1]] = first_enter_indices
+    
+        # Debug: Verify the updated IP locations and corresponding instructions
+        if debug:
+            for h_idx, w_idx, d_idx in zip(search_indices[0], search_indices[1], first_enter_indices):
+                if d_idx != -1:  # Check if the new IP is valid
+                    instruction = self.tape[h_idx, w_idx, d_idx]
+                    print(f"New IP Location (Backward): Height {h_idx}, Width {w_idx}, Depth {d_idx} - Instruction: {instruction.item()}")
+                else:
+                    print(f"No valid backward match found for Height {h_idx}, Width {w_idx}. IP set to -1.")
+                                                                    
     def iterate(self):
         
         # Reset head positions to 0 where self.ip is zero
@@ -235,77 +344,10 @@ class Abiogenesis(object):
                                  torch.arange(self.tape.shape[1], device=self.device),
                                  self.ip]
         
-        # Update head0 positions based on the dynamically generated movement instructions
-        for idx, movement in self.move_instructions.items():
-            move_mask = instructions == idx
-            self.update_head_positions(self.heads, move_mask, head_index=0, movement=movement)
+        for instruction_value, (func, kwargs) in self.instruction_set.items():
+            func(instructions, **kwargs)
         
-        # Update head1 positions with an offset to ensure unique instructions for head1
-        offset = len(self.move_instructions)  # Offset to differentiate instructions for head1
-        
-        for idx, movement in self.move_instructions.items():
-            move_mask = instructions == (idx + offset)  # Offset the index for head1
-            self.update_head_positions(self.heads, move_mask, head_index=1, movement=movement)
-                
-                
-        # Use the offset to determine instruction values for head0
-        dec_tape = instructions == offset * 2 + 1  # Decrement tape for head0
-        inc_tape = instructions == offset * 2 + 2  # Increment tape for head0
-        
-        # Decrement tape values at positions specified by head0
-        self.update_tape(self.tape, dec_tape, self.heads, operation='dec')
-        
-        # Increment tape values at positions specified by head0
-        self.update_tape(self.tape, inc_tape, self.heads, operation='inc')   
-        
-        # Use the offset to determine instruction values for head1
-        dec_tape = instructions == offset * 2 + 3  # Decrement tape for head1
-        inc_tape = instructions == offset * 2 + 4  # Increment tape for head1
-        
-        # Decrement tape values at positions specified by head1
-        self.update_tape(self.tape, dec_tape, self.heads, operation='dec', head_index=1)
-        
-        # Increment tape values at positions specified by head1
-        self.update_tape(self.tape, inc_tape, self.heads, operation='inc', head_index=1)
-        
-        # Assign instruction values for copy operations
-        copy_0_to_1 = instructions == offset * 2 + 5  # Copy from head0 to head1
-        copy_1_to_0 = instructions == offset * 2 + 6  # Copy from head1 to head0
-        
-        # Perform copy from head0 to head1
-        self.copy_tape_values(self.tape, copy_0_to_1, self.heads, src_head_index=0, dest_head_index=1)
-        
-        # Perform copy from head1 to head0
-        self.copy_tape_values(self.tape, copy_1_to_0, self.heads, src_head_index=1, dest_head_index=0)
-        
-        '''
-        # Insert operations
-        insert_0_to_1 = instructions == offset * 2 + 7  # Insert from head0 to head1
-        insert_1_to_0 = instructions == offset * 2 + 8  # Insert from head1 to head0
-    
-        self.insert_tape_values(self.tape, insert_0_to_1, self.heads, src_head_index=0, dest_head_index=1)
-        self.insert_tape_values(self.tape, insert_1_to_0, self.heads, src_head_index=1, dest_head_index=0)
-                
-        # Delete operations
-        delete_0 = instructions == offset * 2 + 9  # Delete at head0
-        delete_1 = instructions == offset * 2 + 10  # Delete at head1
-    
-        self.delete_tape_values(self.tape, delete_0, self.heads, head_index=0)
-        self.delete_tape_values(self.tape, delete_1, self.heads, head_index=1)        
-        '''
-        
-        forward_match_value = offset * 2 + 12
-        reverse_match_value = offset * 2 + 11        
-        enter_loop = instructions == offset * 2 + 11  # Loop entry
-        exit_loop = instructions == offset * 2 + 12   # Loop exit
-        
-        # Generate forward and backward offset matrices for searching
-        tape_depth = self.tape.shape[2]
-        self.handle_loops(forward_match_value, enter_loop, lambda x: x == 0, 1)
-        self.handle_loops(reverse_match_value, exit_loop, lambda x: x != 0, -1)
-        
-        # Update instruction pointer at the end
-        self.ip = (self.ip + 1) % tape_depth
+        self.ip = (self.ip + 1) % self.tape.shape[2]
         
     def mutate(self, rate):
         # Generate a mask for mutation based on the rate
@@ -342,66 +384,23 @@ class Abiogenesis(object):
         obj.tape = state['tape']
         obj.ip = state['ip']
         obj.heads = state['heads']
-        obj.move_instructions = obj.generate_move_instructions()  # Regenerate the move instructions
+        obj.generate_instruction_sets()  # Regenerate the move instructions
         
         return obj
         
     def visualize(self, path):
-        # Initialize a full color map with 256 colors, starting with shades of gray
-        instruction_colors = torch.zeros((self.num_instructions, 3), dtype=torch.uint8)  # Default to black
-        # Define blue for head0 movements
-        head0_blue = torch.tensor([0, 0, 255], dtype=torch.uint8)
-    
-        # Define purple for head1 movements
-        head1_purple = torch.tensor([128, 0, 128], dtype=torch.uint8)
-    
-        # Split the move instructions for head0 and head1 based on how they were generated
-        num_move_instructions = len(self.move_instructions)
-        head0_indices = torch.arange(1, 1 + num_move_instructions)  # Starting at 1 for head0
-        head1_indices = torch.arange(1 + num_move_instructions, 1 + 2 * num_move_instructions)  # Continuing for head1
-    
-        # Assign blue color to all head0 move instructions
-        instruction_colors[head0_indices] = head0_blue
-    
-        # Assign purple color to all head1 move instructions
-        instruction_colors[head1_indices] = head1_purple
-        # Define remaining instruction colors
-        remaining_instruction_colors = {
-            2 * num_move_instructions + 1: [255, 165, 0],    # Orange for decrement
-            2 * num_move_instructions + 2: [255, 165, 0],    # Orange for increment
-            2 * num_move_instructions + 3: [255, 165, 0],    # Orange for decrement
-            2 * num_move_instructions + 4: [255, 165, 0],    # Orange for increment
-            2 * num_move_instructions + 5: [255, 255, 0],    # Yellow for copy head0 to head0
-            2 * num_move_instructions + 6: [255, 255, 0],    # Yellow for copy head0 to head1
-            #2 * num_move_instructions + 7: [0, 255, 0],      # Green for insert
-            2 * num_move_instructions + 11: [0, 255, 0],      # Green for insert
-            #2 * num_move_instructions + 9: [255, 0, 0],      # Red for delete
-            2 * num_move_instructions + 12: [255, 0, 0],     # Red for delete
-            #2 * num_move_instructions + 11: [135, 206, 250], # Light Blue for loop entry
-            #2 * num_move_instructions + 12: [186, 85, 211],  # Light Purple for loop exit
-        }
-    
-        # Assign colors for the remaining instructions
-        for instr, color in remaining_instruction_colors.items():
-            instruction_colors[instr] = torch.tensor(color, dtype=torch.uint8)
     
         # Flatten the entire tape for processing
         flattened_tape = self.tape.flatten().cpu()
     
         # Create a color image array by directly indexing instruction_colors with flattened_tape
-        image_array = instruction_colors[flattened_tape.long()]
-    
-        # For non-instruction values (from index 2 * num_move_instructions + 7 onward), map them to shades of gray
-        non_instruction_mask = flattened_tape >= 2 * num_move_instructions + 13
-        gray_values = flattened_tape[non_instruction_mask].to(torch.uint8)
-        image_array[non_instruction_mask] = torch.stack([gray_values, gray_values, gray_values], dim=-1)
+        image_array = self.color_set[flattened_tape.long()]
     
         # Reshape the image array to the desired dimensions
         height, width, tape_len = self.tape.shape
         grid_size = int(np.sqrt(tape_len))
         # Each depthwise slice (tape_len) should correspond to a grid_size x grid_size block
-        image_array = image_array.view(height, width, grid_size, grid_size, 3)
-        
+        image_array = image_array.view(height, width, grid_size, grid_size, 3)        
         # Rearrange the blocks to form the correct 2D representation
         # height * grid_size creates rows and width * grid_size creates columns of the tape
         image_array = image_array.permute(0, 2, 1, 3, 4).contiguous().view(height * grid_size, width * grid_size, 3)    
@@ -418,8 +417,8 @@ def parse_arguments():
     parser.add_argument('--depth', type=int, default=64, help='Depth of the tape (default: 64)')
     parser.add_argument('--num_instructions', type=int, default=64, help='Number of instructions (default: 64)')
     parser.add_argument('--device', type=str, default='cuda', choices=['cpu', 'cuda'], help='Device to run the simulation on (default: cuda)')
-    parser.add_argument('--num_sims', type=int, default=1000000, help='Number of simulation iterations (default: 1000000)')
-    parser.add_argument('--mutate_rate', type=float, default=0.0, help='Mutation rate (default: 0.0001)')
+    parser.add_argument('--num_sims', type=int, default=1e7, help='Number of simulation iterations (default: 1e7)')
+    parser.add_argument('--mutate_rate', type=float, default=0.0, help='Mutation rate (default: 0.0)')
     parser.add_argument('--results_path', type=str, default='results/run_0', help='Path to save results (default: results/run_0)')
     parser.add_argument('--image_save_interval', type=int, default=500, help='Interval to save images (default: 500 iterations)')
     parser.add_argument('--state_save_interval', type=int, default=100000, help='Interval to save states (default: 100000 iterations)')
