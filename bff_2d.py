@@ -10,8 +10,9 @@ import cv2
 import numpy as np
 
 class Abiogenesis(object):
-    def __init__(self, height, width, tape_len, num_instructions=256, device='cpu'):
+    def __init__(self, height, width, tape_len, num_instructions=256, device='cpu', reset_heads=True):
         assert tape_len**0.5 % 1 == 0
+        self.reset_heads = reset_heads
         self.device = device
         self.num_instructions = num_instructions
         self.tape = torch.randint(low=0, high=num_instructions, size=(height, width, tape_len), dtype=torch.int32, device=device)
@@ -345,9 +346,10 @@ class Abiogenesis(object):
                                                                     
     def iterate(self):
         
-        # Reset head positions to 0 where self.ip is zero
-        reset_mask = self.ip == 0
-        self.heads[reset_mask, :] = torch.tensor([1, 1, 0], device=self.device)
+        if self.reset_heads:
+            # Reset head positions to 0 where self.ip is zero
+            reset_mask = self.ip == 0
+            self.heads[reset_mask, :] = torch.tensor([1, 1, 0], device=self.device)
         
         instructions = self.tape[torch.arange(self.tape.shape[0], device=self.device).unsqueeze(1),
                                  torch.arange(self.tape.shape[1], device=self.device),
@@ -431,6 +433,7 @@ def parse_arguments():
     parser.add_argument('--results_path', type=str, default='results/run_0', help='Path to save results (default: results/run_0)')
     parser.add_argument('--image_save_interval', type=int, default=500, help='Interval to save images (default: 500 iterations)')
     parser.add_argument('--state_save_interval', type=int, default=100000, help='Interval to save states (default: 100000 iterations)')
+    parser.add_argument('--stateful_heads', type=bool, default=False, help='Determines if heads maintain their state or reset at the first instruction')
     return parser.parse_args()
 
 def main():
@@ -444,7 +447,7 @@ def main():
     os.makedirs(states_path, exist_ok=True)
 
     # Initialize the environment
-    env = Abiogenesis(args.height, args.width, args.depth, num_instructions=args.num_instructions, device=args.device)
+    env = Abiogenesis(args.height, args.width, args.depth, num_instructions=args.num_instructions, device=args.device, reset_heads=not args.stateful_heads)
 
     # Run the simulation
     for i in range(args.num_sims):
