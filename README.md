@@ -7,6 +7,7 @@ Project inspired by [BFF Family](https://arxiv.org/pdf/2406.19108) simulations
 Example runs:
 
 [Spontaneous Emergence of Replicators](https://www.youtube.com/watch?v=P-fpHKOhPSg)
+
 Settings Used:
 
 ```bash
@@ -15,7 +16,9 @@ python abiogenesis.py --height 128 --width 256 --depth 64 --num_instructions 64 
 
 
 [Extended Run](https://www.youtube.com/watch?v=zefGNLQRyCY)
+
 Isolated Replicators: coming soon
+
 Settings Used:
 
 ```bash
