@@ -15,6 +15,8 @@ python abiogenesis.py --height 128 --width 256 --depth 64 --num_instructions 64 
 ```
 
 
+
+
 [Extended Run](https://www.youtube.com/watch?v=zefGNLQRyCY)
 
 Isolated Replicators: coming soon
