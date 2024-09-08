@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 class Abiogenesis(object):
-    def __init__(self, height, width, tape_len, num_instructions=256, device='cpu', reset_heads=True):
+    def __init__(self, height, width, tape_len, num_instructions=64, device='cpu', reset_heads=True):
         assert tape_len**0.5 % 1 == 0
         self.reset_heads = reset_heads
         self.device = device
@@ -20,9 +20,13 @@ class Abiogenesis(object):
         self.heads = torch.ones((height, width, 2, 3), dtype=torch.int64, device=device)
         self.heads[:, :, :, -1] = 0
         self.generate_instruction_sets()
+        self.iters = 0
             
 
-    def generate_instruction_sets(self):             
+    def generate_instruction_sets(self):   
+
+        # Set instruction logic kwargs and precompute colors for visualization
+          
         instruction_set = {}
         color_set = {0 : [0, 0, 0]}
         instruction_value = 1
@@ -74,44 +78,45 @@ class Abiogenesis(object):
         for instr, color in color_set.items():
             self.color_set[instr] = torch.tensor(color, dtype=torch.uint8)
         
-
-    def generate_replicator_template(self):
-        offset = len(self.move_instructions)
-        replicator = torch.zeros(self.tape.shape[2]) + self.num_instructions - 3
-        replicator[4] = offset + 3 # shift head1 in dim 1
-        replicator[8] = offset * 2 + 11 # enter loop
-        replicator[12] = offset * 2 + 5 # copy head0 to head1
-        replicator[16] = offset # increment head0 dim 2
-        replicator[20] = offset * 2 # increment head1 dim 2
-        replicator[24] = offset * 2  + 12 # exit loop
-        return replicator
-        
-        
     def update_head_positions(self, instructions,  **kwargs):
+        
+        # Extract key variables
         instruction_value = kwargs.get('instruction_value')
         head_index = kwargs.get('head_index')
         dim = kwargs.get('dim')
         direction = kwargs.get('direction')
+        
+        # Indentify positions with the corresponding instruction
         mask = instructions == instruction_value
+        
         if mask.any():
-            # Extract a reduced version of heads using the move_mask
+            
+            # Extract relevant head positions
             masked_heads = self.heads[mask]
-            mod = self.tape.shape[2] if dim == 2 else 3
+
             # Update each coordinate in the specified head_index
             masked_heads[:, head_index, dim] += direction
+            
+            # Set limits on head coordinates, allowing cycling
+            mod = self.tape.shape[2] if dim == 2 else 3 
             masked_heads[:, head_index, dim] %= mod
 
-            # Reassign the modified masked_heads back to the correct positions
+            # Overwrite the relevant self.head coordinates with the new values
             self.heads[mask] = masked_heads
 
     def update_tape(self, instructions, **kwargs):
+        
+        # Extract key variables
         instruction_value = kwargs.get('instruction_value')
         head_index = kwargs.get('head_index')
         increment = kwargs.get('increment')
 
+        # Indentify positions with the corresponding instruction
         mask = instructions == instruction_value
+        
         if mask.any():
-            # Extract masked positions using the indices mask
+            
+            # Extract relevant head positions
             masked_heads = self.heads[mask]
             
             # Calculate indices for height, width, and depth based on the masked heads
@@ -125,12 +130,18 @@ class Abiogenesis(object):
             self.tape[height_indices, width_indices, depth_indices] %= self.num_instructions
 
     def copy_tape_values(self, instructions, **kwargs):
+        
+        # Extract key variables
         instruction_value = kwargs.get('instruction_value')
         src_head_index = kwargs.get('src_head_index')
         dest_head_index = kwargs.get('dest_head_index')
+        
+        # Indentify positions with the corresponding instruction
         mask = instructions == instruction_value
+        
         if mask.any():
-            # Extract masked positions using the indices mask
+            
+            # Extract relevant head positions
             masked_heads = self.heads[mask]
     
             # Calculate source and destination indices for height, width, and depth
@@ -199,21 +210,26 @@ class Abiogenesis(object):
             )
             
     def handle_forward_loops(self, instructions, **kwargs):
+        
+        # Extract key variables
         enter_loop_instruction_value = kwargs.get('enter_loop_instruction_value')
         exit_loop_instruction_value = kwargs.get('exit_loop_instruction_value')
         enter_loop_condition = kwargs.get('enter_loop_condition')
         debug = kwargs.get('debug')
-        # Create mask for enter loop instructions
+        
+        # Create mask for height, width positions with enter loop instruction
         enter_mask = instructions == enter_loop_instruction_value
         
         if not enter_mask.any():
             return  # Exit early if no enter instructions are found
     
-        # Extract the indices based on head positions for enter mask
+        # Create index using the exit_mask
         enter_indices = enter_mask.nonzero(as_tuple=True)
+        
+        # Identify the relevant heads
         enter_heads = self.heads[enter_indices]
     
-        # Calculate indices based on head positions for enter conditions
+        # Calculate the height, width, depth positions of relevant head0's
         enter_height_indices = (enter_indices[0] + enter_heads[:, 0, 0] - 1) % self.tape.shape[0]
         enter_width_indices = (enter_indices[1] + enter_heads[:, 0, 1] - 1) % self.tape.shape[1]
         enter_depth_indices = enter_heads[:, 0, 2]
@@ -228,26 +244,29 @@ class Abiogenesis(object):
         if not valid_enter_positions.any():
             return  # Exit early if no valid enter conditions are met
     
-        # Extract indices for valid enter conditions
-        enter_valid_indices = valid_enter_positions.nonzero(as_tuple=True)
-        search_indices = (enter_valid_indices[0], enter_valid_indices[1])
+        # Create index of positions to search
+        search_indices = valid_enter_positions.nonzero(as_tuple=True)
         search_area = self.tape[search_indices[0], search_indices[1]]
     
         # Find enter and exit positions within the search area
         enter_positions = search_area == enter_loop_instruction_value
         exit_positions = search_area == exit_loop_instruction_value
     
-        # Compute the cumulative sum to track nesting levels
+        # Compute the cumulative sum to track loop nesting levels
         nesting_levels = torch.cumsum(enter_positions.int() - exit_positions.int(), dim=1)
     
-        # Identify the depths of valid enter positions
+        # Identify the min depths of valid search positions
         enter_depths = self.ip[search_indices]
-        # Match exit positions with correct nesting level conditions
+        
+        # Match valid search positions with correct nesting level conditions
         valid_matches = (torch.arange(self.tape.shape[2], device=self.device).unsqueeze(0) > enter_depths.unsqueeze(1)) & \
                         (nesting_levels == (nesting_levels[torch.arange(len(enter_depths)), enter_depths].unsqueeze(1) - 1))
         valid_matches = valid_matches * exit_positions
-        # Get the first valid exit match
+        
+        # Get the index of the first exit match
         first_exit_indices = valid_matches.int().argmax(dim=1)
+        
+        # Check if the zero positions actually correspond to exit loop instructions
         invalid_forward_matches = first_exit_indices == 0
         first_exit_indices[invalid_forward_matches] = -1
     
@@ -264,21 +283,26 @@ class Abiogenesis(object):
                     print(f"No valid forward match found for Height {h_idx}, Width {w_idx}. IP set to -1.")
     
     def handle_backward_loops(self, instructions, **kwargs):
+        
+        # Initialize key variables
         enter_loop_instruction_value = kwargs.get('enter_loop_instruction_value')
         exit_loop_instruction_value = kwargs.get('exit_loop_instruction_value')
         exit_loop_condition = kwargs.get('exit_loop_condition')
         debug = kwargs.get('debug')
-        # Create mask for exit loop instructions
+        
+        # Create mask for height, width positions with exit loop instructions
         exit_mask = instructions == exit_loop_instruction_value
     
         if not exit_mask.any():
             return  # Exit early if no exit instructions are found
     
-        # Extract the indices based on head positions for exit mask
+        # Create index using the exit_mask
         exit_indices = exit_mask.nonzero(as_tuple=True)
+        
+        # Identify the relevant heads
         exit_heads = self.heads[exit_indices]
     
-        # Calculate indices based on head positions for exit conditions
+        # Calculate the height, width, depth positions of relevant head0's
         exit_height_indices = (exit_indices[0] + exit_heads[:, 0, 0] - 1) % self.tape.shape[0]
         exit_width_indices = (exit_indices[1] + exit_heads[:, 0, 1] - 1) % self.tape.shape[1]
         exit_depth_indices = exit_heads[:, 0, 2]
@@ -293,40 +317,40 @@ class Abiogenesis(object):
         if not valid_exit_positions.any():
             return  # Exit early if no valid exit conditions are met
     
-        # Extract indices for valid exit conditions
-        exit_valid_indices = valid_exit_positions.nonzero(as_tuple=True)
-        search_indices = (exit_valid_indices[0], exit_valid_indices[1])
+        # Create index of positions to search
+        search_indices = valid_exit_positions.nonzero(as_tuple=True)
         search_area = self.tape[search_indices[0], search_indices[1]]
     
+        # Flip depthwise to convert backward search to forward search
         flipped_search_area = search_area.flip(dims=[1])
     
         # Find enter and exit positions within the flipped search area
         enter_positions = flipped_search_area == enter_loop_instruction_value
         exit_positions = flipped_search_area == exit_loop_instruction_value
     
-        # Compute the cumulative sum to track nesting levels in the flipped search area
+        # Compute the cumulative sum to track loop nesting levels in the flipped search area
         nesting_levels = torch.cumsum(exit_positions.int() - enter_positions.int(), dim=1)
     
-        # Identify the depths of valid exit positions and adjust for flipped indices
+        # Identify the min depths of valid search positions and adjust for flipped indices
         exit_depths = self.tape.shape[2] - self.ip[search_indices] - 1
     
-        # Match enter positions with correct nesting level conditions
+        # Match valid search positions with correct nesting level conditions
         valid_matches = (torch.arange(self.tape.shape[2], device=self.device).unsqueeze(0) > exit_depths.unsqueeze(1)) & \
                         (nesting_levels == (nesting_levels[torch.arange(len(exit_depths)), exit_depths].unsqueeze(1) - 1))
     
         # Ensure matches point only to enter loop positions
         valid_matches = valid_matches * enter_positions
     
-        # Get the first valid enter match for the flipped backward search
+        # Get the first valid enter match for the search
         first_enter_indices = valid_matches.int().argmax(dim=1)
         
         # Identify positions where first_enter_indices points to zero
         zero_indices = first_enter_indices == 0
         
-        # Check if these zero positions actually correspond to the correct enter loop instruction
+        # Check if these zero positions correspond to the enter loop instructions
         zero_valid = enter_positions[:, -1]
         
-        # Convert the matched indices back to the original depth dimension
+        # Convert the matched indices back to the unflipped depth dimension
         first_enter_indices = self.tape.shape[2] - first_enter_indices - 1
         
         # Update the invalid matches: set to -1 where the zero index does not correspond to a valid enter loop instruction
@@ -345,28 +369,41 @@ class Abiogenesis(object):
                     print(f"No valid backward match found for Height {h_idx}, Width {w_idx}. IP set to -1.")
                                                                     
     def iterate(self):
-        
-        if self.reset_heads:
-            # Reset head positions to 0 where self.ip is zero
-            reset_mask = self.ip == 0
-            self.heads[reset_mask, :] = torch.tensor([1, 1, 0], device=self.device)
-        
+                
+        # get the current instruction for each instruction sequence using self.ip (instruction position)
         instructions = self.tape[torch.arange(self.tape.shape[0], device=self.device).unsqueeze(1),
                                  torch.arange(self.tape.shape[1], device=self.device),
                                  self.ip]
         
+        # iterate through each type of instruction, executing all sequences in parallel
         for instruction_value, (func, kwargs) in self.instruction_set.items():
             func(instructions, **kwargs)
         
+        if self.reset_heads:
+            # Reset head positions to 0 where the next instruction is position 0
+            reset_mask = (self.ip == self.tape.shape[2] - 1) | (self.ip == -1)
+        else:
+            # Reset head positions only if the instruction sequence has reached the terminus
+            reset_mask = (self.ip == self.tape.shape[2] - 1)
+        self.heads[reset_mask, :] = torch.tensor([1, 1, 0], device=self.device)
+        
+        # Increment the instruction positions
         self.ip = (self.ip + 1) % self.tape.shape[2]
         
+        # Increment iteration counter
+        self.iters += 1
+        
     def mutate(self, rate):
+        
         # Generate a mask for mutation based on the rate
         mutation_mask = torch.rand(self.tape.shape, device=self.device) < rate
+        
         # Count the number of mutations needed
         num_mutations = mutation_mask.sum()
-        # Generate only the required number of random values
+        
+        # Generate the required number of random values
         random_values = torch.randint(low=0, high=self.num_instructions, size=(num_mutations.item(),), dtype=torch.int32, device=self.device)
+        
         # Apply the random values to the tape at positions where the mutation mask is True
         self.tape[mutation_mask] = random_values
             
@@ -376,12 +413,15 @@ class Abiogenesis(object):
             'tape': self.tape,
             'ip': self.ip,
             'heads': self.heads,
-            'device': self.device
+            'device': self.device,
+            'num_instructions' : self.num_instructions,
+            'reset_heads' : self.reset_heads,
         }
         torch.save(state, path)
         
     @classmethod
-    def load(cls, path):
+    def load(cls, path, device='cpu'):
+        
         # Load the state of the Abiogenesis class from disk
         state = torch.load(path)
         
@@ -389,37 +429,56 @@ class Abiogenesis(object):
         height, width, tape_len = state['tape'].shape
         
         # Create a new instance of the class with the loaded state
-        obj = cls(height=height, width=width, tape_len=tape_len, device=state['device'])
+        obj = cls(height=height, width=width, tape_len=tape_len, device=device)
         
-        # Restore the state
-        obj.tape = state['tape']
-        obj.ip = state['ip']
-        obj.heads = state['heads']
-        obj.generate_instruction_sets()  # Regenerate the move instructions
+        # Restore the state to the desired device
+        obj.tape = state['tape'].to(device)
+        obj.ip = state['ip'].to(device)
+        obj.heads = state['heads'].to(device)
+        obj.num_instructions = state.get('num_instructions', 256)
+        obj.reset_heads = state.get('reset_heads', True)
+        obj.iters = state.get('iters', 0)
         
         return obj
         
     def visualize(self, path):
     
-        # Flatten the entire tape for processing
+        height, width, tape_len = self.tape.shape
+        
+        # Flatten the entire tape to index the instruction color set
         flattened_tape = self.tape.flatten().cpu()
     
-        # Create a color image array by directly indexing instruction_colors with flattened_tape
+        # Create the color image array by directly indexing instruction_colors
         image_array = self.color_set[flattened_tape.long()]
-    
-        # Reshape the image array to the desired dimensions
-        height, width, tape_len = self.tape.shape
+        
+        # Calculate the dimensions of a square instruction sequence
         grid_size = int(np.sqrt(tape_len))
-        # Each depthwise slice (tape_len) should correspond to a grid_size x grid_size block
-        image_array = image_array.view(height, width, grid_size, grid_size, 3)        
-        # Rearrange the blocks to form the correct 2D representation
+        
+        # Reshape image array to original height and width, but set the depth dimension
+        # to square grids with 3 color channels
+        image_array = image_array.view(height, width, grid_size, grid_size, 3)  
+        
+        # Rearrange the blocks into rows and columns
         # height * grid_size creates rows and width * grid_size creates columns of the tape
-        image_array = image_array.permute(0, 2, 1, 3, 4).contiguous().view(height * grid_size, width * grid_size, 3)    
+        image_array = image_array.permute(0, 2, 1, 3, 4).contiguous().view(height * grid_size, width * grid_size, 3)
+        
         # Convert to numpy for saving with OpenCV
         image_array_np = image_array.numpy()
+        
+        # Convert BGR to RGB
         image_array_np = image_array_np[..., ::-1]
+        
         # Save the image to disk using OpenCV
         cv2.imwrite(path, image_array_np)
+        
+    def to(self, device):
+        assert str(device).isin(['cpu', 'cuda'])
+        self.device = device
+        self.tape = self.tape.to(device)
+        self.ip = self.ip.to(device)
+        self.heads = self.heads.to(device)
+        
+    
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Run Abiogenesis simulation with customizable parameters.")
@@ -433,7 +492,8 @@ def parse_arguments():
     parser.add_argument('--results_path', type=str, default='results/run_0', help='Path to save results (default: results/run_0)')
     parser.add_argument('--image_save_interval', type=int, default=500, help='Interval to save images (default: 500 iterations)')
     parser.add_argument('--state_save_interval', type=int, default=100000, help='Interval to save states (default: 100000 iterations)')
-    parser.add_argument('--stateful_heads', type=bool, default=False, help='Determines if heads maintain their state or reset at the first instruction')
+    parser.add_argument('--stateful_heads', type=bool, default=False, help='Determines if heads maintain their state or reset upon invalid instruction')
+    parser.add_argument('--load', type=str, default='', help='Path to saved simulation')
     return parser.parse_args()
 
 def main():
@@ -447,10 +507,18 @@ def main():
     os.makedirs(states_path, exist_ok=True)
 
     # Initialize the environment
-    env = Abiogenesis(args.height, args.width, args.depth, num_instructions=args.num_instructions, device=args.device, reset_heads=not args.stateful_heads)
-
+    if args.load:
+        if os.path.exists(args.load):
+            env = Abiogenesis.load(args.load, device=args.device)
+        else:
+            print("Load path does not exist.")
+            return
+    else:
+        env = Abiogenesis(args.height, args.width, args.depth, num_instructions=args.num_instructions, device=args.device, reset_heads=not args.stateful_heads)
+        
     # Run the simulation
-    for i in range(args.num_sims):
+    start_iter = env.iters
+    for i in range(start_iter, args.num_sims+1):
         env.iterate()
         if args.mutate_rate and not i % args.depth:
              env.mutate(args.mutate_rate)
