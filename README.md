@@ -1,6 +1,6 @@
 # Abiogenesis Simulation
 
-This simulation models an abiogenetic process using a grid-based instruction sequence system with simple rule sets for head movement, tape modification, and loop handling. The simulation runs iteratively, with options for saving state and visualizations at specified intervals.
+This simulation models an abiogenetic process using a grid-based instruction sequence system with simple rule sets for head movement, tape modification, and loop handling. The simulation runs iteratively, with options for saving state and visualizations at specified intervals. Interactions between instruction sequences are mediated by head movements, which can read/write to adjacent sequences.
 
 Project inspired by [BFF Family](https://arxiv.org/pdf/2406.19108) simulations
 
@@ -19,7 +19,7 @@ python abiogenesis.py --height 128 --width 256 --depth 64 --num_instructions 64 
 
 [Extended Run](https://www.youtube.com/watch?v=zefGNLQRyCY)
 
-Isolated Replicators: coming soon
+[Isolated Replicators](https://www.youtube.com/watch?v=7ZjMOhc_OyA)
 
 Settings Used:
 
