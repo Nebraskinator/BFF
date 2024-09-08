@@ -4,7 +4,7 @@ This simulation models an abiogenetic process using a grid-based instruction seq
 
 Project inspired by [BFF Family](https://arxiv.org/pdf/2406.19108) simulations
 
-Example runs:
+# Example runs:
 
 [Spontaneous Emergence of Replicators](https://www.youtube.com/watch?v=P-fpHKOhPSg)
 
@@ -14,7 +14,7 @@ Settings Used:
 python abiogenesis.py --height 128 --width 256 --depth 64 --num_instructions 64 --num_sims 5000000
 ```
 
-
+ 
 
 
 [Extended Run](https://www.youtube.com/watch?v=zefGNLQRyCY)
