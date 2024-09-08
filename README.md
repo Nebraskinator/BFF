@@ -1,10 +1,23 @@
 # Abiogenesis Simulation
 
-This simulation models an abiogenetic process using a grid-based tape system with complex rule sets for head movement, tape modification, and loop handling. The simulation runs iteratively, with options for saving state and visualizations at specified intervals.
-
-Emergence of self-replicating instruction sequences: [video](https://www.youtube.com/watch?v=JuRzMX985mw)
+This simulation models an abiogenetic process using a grid-based instruction sequence system with simple rule sets for head movement, tape modification, and loop handling. The simulation runs iteratively, with options for saving state and visualizations at specified intervals.
 
 Project inspired by [BFF Family](https://arxiv.org/pdf/2406.19108) simulations
+
+Example runs:
+[Spontaneous Emergence of Replicators](https://www.youtube.com/watch?v=P-fpHKOhPSg)
+Settings Used:
+'''bash
+python abiogenesis.py --height 128 --width 256 --depth 64 --num_instructions 64 --num_sims 5000000
+'''
+
+[Extended Run](https://www.youtube.com/watch?v=zefGNLQRyCY)
+Isolated Replicators: coming soon
+Settings Used:
+'''bash
+python abiogenesis.py --height 256 --width 512 --depth 64 --num_instructions 64 --num_sims 24000000 --stateful_heads True
+'''
+
 
 ## Requirements
 
@@ -37,10 +50,12 @@ python abiogenesis.py [OPTIONS]
 - `--num_instructions`: Number of unique instructions (default: 64).
 - `--device`: Device to run the simulation on (`cpu` or `cuda`, default: `cuda`).
 - `--num_sims`: Number of simulation iterations (default: 1,000,000).
-- `--mutate_rate`: Mutation rate during simulation (default: 0.0001).
+- `--mutate_rate`: Mutation rate during simulation (default: 0.0).
 - `--results_path`: Path to save results, including images and state files (default: `results/run_0`).
 - `--image_save_interval`: Interval (in iterations) to save visualizations as images (default: 500).
 - `--state_save_interval`: Interval (in iterations) to save the simulation state (default: 100,000).
+- `--stateful_heads`: Only allow heads to reset position when executing the terminal instruction (default: False).
+- `--load`: Resume run from checkpoint. Must enter a path to a valid checkpoint (default: '').
 
 ### Example Usage
 
