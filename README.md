@@ -9,18 +9,18 @@ Example runs:
 [Spontaneous Emergence of Replicators](https://www.youtube.com/watch?v=P-fpHKOhPSg)
 Settings Used:
 
-'''bash
+```bash
 python abiogenesis.py --height 128 --width 256 --depth 64 --num_instructions 64 --num_sims 5000000
-'''
+```
 
 
 [Extended Run](https://www.youtube.com/watch?v=zefGNLQRyCY)
 Isolated Replicators: coming soon
 Settings Used:
 
-'''bash
+```bash
 python abiogenesis.py --height 256 --width 512 --depth 64 --num_instructions 64 --num_sims 24000000 --stateful_heads True
-'''
+```
 
 
 ## Requirements
