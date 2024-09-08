@@ -2,7 +2,7 @@
 
 This simulation models an abiogenetic process using a grid-based instruction sequence system with simple rule sets for head movement, tape modification, and loop handling. The simulation runs iteratively, with options for saving state and visualizations at specified intervals. Interactions between instruction sequences are mediated by head movements, which can read/write to adjacent sequences.
 
-Project inspired by [BFF Family](https://arxiv.org/pdf/2406.19108) simulations
+Project inspired by [BFF](https://arxiv.org/pdf/2406.19108) simulations
 
 # Example runs:
 
