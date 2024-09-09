@@ -10,9 +10,19 @@ import cv2
 import numpy as np
 
 class Abiogenesis(object):
-    def __init__(self, height, width, tape_len, num_instructions=64, device='cpu', reset_heads=True):
+    def __init__(self, height, 
+                 width, 
+                 tape_len, 
+                 num_instructions=64, 
+                 device='cpu', 
+                 reset_heads=True,
+                 loop_condition='value',
+                 loop_option=False):
         assert tape_len**0.5 % 1 == 0
+        assert loop_condition in ['value', 'match']
         self.reset_heads = reset_heads
+        self.loop_condition = loop_condition
+        self.loop_option = loop_option
         self.device = device
         self.num_instructions = num_instructions
         self.tape = torch.randint(low=0, high=num_instructions, size=(height, width, tape_len), dtype=torch.int32, device=device)
@@ -29,19 +39,40 @@ class Abiogenesis(object):
           
         instruction_set = {}
         color_set = {0 : [0, 0, 0]}
+        
+        
+        
         instruction_value = 1
-        instruction_set[instruction_value] = (self.handle_forward_loops, {'enter_loop_instruction_value' : instruction_value, 
-                                                          'exit_loop_instruction_value' : instruction_value+1,
-                                                          'enter_loop_condition' : lambda x: x == 0,
+        enter_loop_instruction_values = [instruction_value, instruction_value+2] if self.loop_option else [instruction_value]
+        exit_loop_instruction_values = [instruction_value+1, instruction_value+3] if self.loop_option else [instruction_value+1]
+        instruction_set[instruction_value] = (self.handle_forward_loops, {'instruction_value' : instruction_value, 
+                                                          'enter_loop_instruction_values' : enter_loop_instruction_values, 
+                                                          'exit_loop_instruction_values' : exit_loop_instruction_values,
                                                           'debug' : False})
         color_set[instruction_value] = [0, 255, 0]
         instruction_value += 1
-        instruction_set[instruction_value] = (self.handle_backward_loops, {'exit_loop_instruction_value' : instruction_value, 
-                                                          'enter_loop_instruction_value' : instruction_value-1,
-                                                          'exit_loop_condition' : lambda x: x != 0,
+        instruction_set[instruction_value] = (self.handle_backward_loops, {'instruction_value' : instruction_value, 
+                                                          'enter_loop_instruction_values' : enter_loop_instruction_values, 
+                                                          'exit_loop_instruction_values' : exit_loop_instruction_values,
                                                           'debug' : False})
         color_set[instruction_value] = [255, 0, 0]
         instruction_value += 1
+        
+        if self.loop_option:
+            instruction_set[instruction_value] = (self.handle_forward_loops, {'instruction_value' : instruction_value, 
+                                                              'enter_loop_instruction_values' : enter_loop_instruction_values, 
+                                                              'exit_loop_instruction_values' : exit_loop_instruction_values,
+                                                              'debug' : False,
+                                                              'option' : self.loop_option})
+            color_set[instruction_value] = [0, 255, 0]
+            instruction_value += 1
+            instruction_set[instruction_value] = (self.handle_backward_loops, {'instruction_value' : instruction_value, 
+                                                              'enter_loop_instruction_values' : enter_loop_instruction_values, 
+                                                              'exit_loop_instruction_values' : exit_loop_instruction_values,
+                                                              'debug' : False,
+                                                              'option' : self.loop_option})
+            color_set[instruction_value] = [255, 0, 0]
+            instruction_value += 1
         
         for head_index in [0, 1]:
             for dim in [0, 1, 2]:
@@ -212,13 +243,14 @@ class Abiogenesis(object):
     def handle_forward_loops(self, instructions, **kwargs):
         
         # Extract key variables
-        enter_loop_instruction_value = kwargs.get('enter_loop_instruction_value')
-        exit_loop_instruction_value = kwargs.get('exit_loop_instruction_value')
-        enter_loop_condition = kwargs.get('enter_loop_condition')
+        instruction_value = kwargs.get('instruction_value')
+        enter_loop_instruction_values = kwargs.get('enter_loop_instruction_values')
+        exit_loop_instruction_values = kwargs.get('exit_loop_instruction_values')
         debug = kwargs.get('debug')
+        option = kwargs.get('option', False)
         
         # Create mask for height, width positions with enter loop instruction
-        enter_mask = instructions == enter_loop_instruction_value
+        enter_mask = instructions == instruction_value
         
         if not enter_mask.any():
             return  # Exit early if no enter instructions are found
@@ -228,15 +260,26 @@ class Abiogenesis(object):
         
         # Identify the relevant heads
         enter_heads = self.heads[enter_indices]
-    
+        
         # Calculate the height, width, depth positions of relevant head0's
-        enter_height_indices = (enter_indices[0] + enter_heads[:, 0, 0] - 1) % self.tape.shape[0]
-        enter_width_indices = (enter_indices[1] + enter_heads[:, 0, 1] - 1) % self.tape.shape[1]
-        enter_depth_indices = enter_heads[:, 0, 2]
-    
-        # Check loop conditions at the head positions
-        enter_condition_met = enter_loop_condition(self.tape[enter_height_indices, enter_width_indices, enter_depth_indices])
-    
+        head0_height_indices = (enter_indices[0] + enter_heads[:, 0, 0] - 1) % self.tape.shape[0]
+        head0_width_indices = (enter_indices[1] + enter_heads[:, 0, 1] - 1) % self.tape.shape[1]
+        head0_depth_indices = enter_heads[:, 0, 2]
+        
+        if self.loop_condition == 'value':
+            if option:
+                enter_condition_met = self.tape[head0_height_indices, head0_width_indices, head0_depth_indices] != 0
+            else:
+                enter_condition_met = self.tape[head0_height_indices, head0_width_indices, head0_depth_indices] == 0
+        elif self.loop_condition == 'match':
+            head1_height_indices = (enter_indices[0] + enter_heads[:, 1, 0] - 1) % self.tape.shape[0]
+            head1_width_indices = (enter_indices[1] + enter_heads[:, 1, 1] - 1) % self.tape.shape[1]
+            head1_depth_indices = enter_heads[:, 1, 2]
+            if option:
+                enter_condition_met = self.tape[head0_height_indices, head0_width_indices, head0_depth_indices] != self.tape[head1_height_indices, head1_width_indices, head1_depth_indices]
+            else:
+                enter_condition_met = self.tape[head0_height_indices, head0_width_indices, head0_depth_indices] == self.tape[head1_height_indices, head1_width_indices, head1_depth_indices]
+
         # Filter the positions where enter conditions are met
         valid_enter_positions = enter_mask.clone()
         valid_enter_positions[enter_indices] = enter_condition_met
@@ -249,8 +292,8 @@ class Abiogenesis(object):
         search_area = self.tape[search_indices[0], search_indices[1]]
     
         # Find enter and exit positions within the search area
-        enter_positions = search_area == enter_loop_instruction_value
-        exit_positions = search_area == exit_loop_instruction_value
+        enter_positions = torch.isin(search_area, torch.tensor(enter_loop_instruction_values, device=self.device))
+        exit_positions = torch.isin(search_area, torch.tensor(exit_loop_instruction_values, device=self.device))
     
         # Compute the cumulative sum to track loop nesting levels
         nesting_levels = torch.cumsum(enter_positions.int() - exit_positions.int(), dim=1)
@@ -285,13 +328,14 @@ class Abiogenesis(object):
     def handle_backward_loops(self, instructions, **kwargs):
         
         # Initialize key variables
-        enter_loop_instruction_value = kwargs.get('enter_loop_instruction_value')
-        exit_loop_instruction_value = kwargs.get('exit_loop_instruction_value')
-        exit_loop_condition = kwargs.get('exit_loop_condition')
+        instruction_value = kwargs.get('instruction_value')
+        enter_loop_instruction_values = kwargs.get('enter_loop_instruction_values')
+        exit_loop_instruction_values = kwargs.get('exit_loop_instruction_values')
         debug = kwargs.get('debug')
+        option = kwargs.get('loop_option', False)
         
         # Create mask for height, width positions with exit loop instructions
-        exit_mask = instructions == exit_loop_instruction_value
+        exit_mask = instructions == instruction_value
     
         if not exit_mask.any():
             return  # Exit early if no exit instructions are found
@@ -303,13 +347,24 @@ class Abiogenesis(object):
         exit_heads = self.heads[exit_indices]
     
         # Calculate the height, width, depth positions of relevant head0's
-        exit_height_indices = (exit_indices[0] + exit_heads[:, 0, 0] - 1) % self.tape.shape[0]
-        exit_width_indices = (exit_indices[1] + exit_heads[:, 0, 1] - 1) % self.tape.shape[1]
-        exit_depth_indices = exit_heads[:, 0, 2]
-    
-        # Check loop conditions at the head positions
-        exit_condition_met = exit_loop_condition(self.tape[exit_height_indices, exit_width_indices, exit_depth_indices])
-    
+        head0_height_indices = (exit_indices[0] + exit_heads[:, 0, 0] - 1) % self.tape.shape[0]
+        head0_width_indices = (exit_indices[1] + exit_heads[:, 0, 1] - 1) % self.tape.shape[1]
+        head0_depth_indices = exit_heads[:, 0, 2]
+        
+        if self.loop_condition == 'value':
+            if option:
+                exit_condition_met = self.tape[head0_height_indices, head0_width_indices, head0_depth_indices] == 0
+            else:
+                exit_condition_met = self.tape[head0_height_indices, head0_width_indices, head0_depth_indices] != 0
+        elif self.loop_condition == 'match':
+            head1_height_indices = (exit_indices[0] + exit_heads[:, 1, 0] - 1) % self.tape.shape[0]
+            head1_width_indices = (exit_indices[1] + exit_heads[:, 1, 1] - 1) % self.tape.shape[1]
+            head1_depth_indices = exit_heads[:, 1, 2]
+            if option:
+                exit_condition_met = self.tape[head0_height_indices, head0_width_indices, head0_depth_indices] == self.tape[head1_height_indices, head1_width_indices, head1_depth_indices]
+            else:
+                exit_condition_met = self.tape[head0_height_indices, head0_width_indices, head0_depth_indices] != self.tape[head1_height_indices, head1_width_indices, head1_depth_indices]    
+
         # Filter the positions where exit conditions are met
         valid_exit_positions = exit_mask.clone()
         valid_exit_positions[exit_indices] = exit_condition_met
@@ -325,8 +380,8 @@ class Abiogenesis(object):
         flipped_search_area = search_area.flip(dims=[1])
     
         # Find enter and exit positions within the flipped search area
-        enter_positions = flipped_search_area == enter_loop_instruction_value
-        exit_positions = flipped_search_area == exit_loop_instruction_value
+        enter_positions = torch.isin(flipped_search_area, torch.tensor(enter_loop_instruction_values, device=self.device))
+        exit_positions = torch.isin(flipped_search_area, torch.tensor(exit_loop_instruction_values, device=self.device))
     
         # Compute the cumulative sum to track loop nesting levels in the flipped search area
         nesting_levels = torch.cumsum(exit_positions.int() - enter_positions.int(), dim=1)
@@ -344,17 +399,11 @@ class Abiogenesis(object):
         # Get the first valid enter match for the search
         first_enter_indices = valid_matches.int().argmax(dim=1)
         
-        # Identify positions where first_enter_indices points to zero
-        zero_indices = first_enter_indices == 0
-        
-        # Check if these zero positions correspond to the enter loop instructions
-        zero_valid = enter_positions[:, -1]
+        invalid_backward_matches = first_enter_indices == 0
+        first_enter_indices[invalid_backward_matches] = self.tape.shape[2]
         
         # Convert the matched indices back to the unflipped depth dimension
         first_enter_indices = self.tape.shape[2] - first_enter_indices - 1
-        
-        # Update the invalid matches: set to -1 where the zero index does not correspond to a valid enter loop instruction
-        first_enter_indices[zero_indices & ~zero_valid] = -1
     
         # Update IPs based on valid backward matches
         self.ip[search_indices[0], search_indices[1]] = first_enter_indices
@@ -494,6 +543,8 @@ def parse_arguments():
     parser.add_argument('--state_save_interval', type=int, default=100000, help='Interval to save states (default: 100000 iterations)')
     parser.add_argument('--stateful_heads', type=bool, default=False, help='Determines if heads maintain their state or reset upon invalid instruction')
     parser.add_argument('--load', type=str, default='', help='Path to saved simulation')
+    parser.add_argument('--loop_condition', type=str, default='value', help='Loops are conditioned on 0 (value) or matching head values (match)')
+    parser.add_argument('--loop_option', type=bool, default=False, help='Adds an additional set of loop instructions with opposite conditions')
     return parser.parse_args()
 
 def main():
@@ -514,7 +565,14 @@ def main():
             print("Load path does not exist.")
             return
     else:
-        env = Abiogenesis(args.height, args.width, args.depth, num_instructions=args.num_instructions, device=args.device, reset_heads=not args.stateful_heads)
+        env = Abiogenesis(args.height, 
+                          args.width, 
+                          args.depth, 
+                          num_instructions=args.num_instructions, 
+                          device=args.device, 
+                          reset_heads=not args.stateful_heads,
+                          loop_condition=args.loop_condition,
+                          loop_option=args.loop_option)
         
     # Run the simulation
     start_iter = env.iters
