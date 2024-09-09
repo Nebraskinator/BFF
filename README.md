@@ -11,7 +11,7 @@ Project inspired by [BFF](https://arxiv.org/pdf/2406.19108) simulations
 Settings Used:
 
 ```bash
-python abiogenesis.py --height 128 --width 256 --depth 64 --num_instructions 64 --num_sims 5000000
+python bff_2d.py --height 128 --width 256 --depth 64 --num_instructions 64 --num_sims 5000000
 ```
 
  
@@ -24,7 +24,7 @@ python abiogenesis.py --height 128 --width 256 --depth 64 --num_instructions 64 
 Settings Used:
 
 ```bash
-python abiogenesis.py --height 256 --width 512 --depth 64 --num_instructions 64 --num_sims 24000000 --stateful_heads True
+python bff_2d.py --height 256 --width 512 --depth 64 --num_instructions 64 --num_sims 24000000 --stateful_heads True
 ```
 
 
@@ -48,7 +48,7 @@ pip install torch numpy opencv-python
 Run the simulation from the command line with customizable parameters:
 
 ```bash
-python abiogenesis.py [OPTIONS]
+python bff_2d.py [OPTIONS]
 ```
 
 ### Command-Line Arguments
@@ -71,25 +71,25 @@ python abiogenesis.py [OPTIONS]
 1. **Run the simulation on GPU with default parameters:**
 
     ```bash
-    python abiogenesis.py
+    python bff_2d.py
     ```
 
 2. **Run the simulation on CPU with a custom mutation rate and save results to a specified path:**
 
     ```bash
-    python abiogenesis.py --device cpu --mutate_rate 0.001 --results_path results/run_1
+    python bff_2d.py --device cpu --mutate_rate 0.001 --results_path results/run_1
     ```
 
 3. **Set the height, width, depth of the tape and run 5 million iterations:**
 
     ```bash
-    python abiogenesis.py --height 64 --width 128 --depth 32 --num_sims 5000000
+    python bff_2d.py --height 64 --width 128 --depth 32 --num_sims 5000000
     ```
 
 4. **Save images every 1000 iterations and states every 200,000 iterations:**
 
     ```bash
-    python abiogenesis.py --image_save_interval 1000 --state_save_interval 200000
+    python bff_2d.py --image_save_interval 1000 --state_save_interval 200000
     ```
 
 ### Output Directory Structure
