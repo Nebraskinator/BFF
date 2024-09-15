@@ -40,8 +40,6 @@ class Abiogenesis(object):
         instruction_set = {}
         color_set = {0 : [0, 0, 0]}
         
-        
-        
         instruction_value = 1
         enter_loop_instruction_values = [instruction_value, instruction_value+2] if self.loop_option else [instruction_value]
         exit_loop_instruction_values = [instruction_value+1, instruction_value+3] if self.loop_option else [instruction_value+1]
@@ -324,7 +322,7 @@ class Abiogenesis(object):
                     print(f"New IP Location (Forward): Height {h_idx}, Width {w_idx}, Depth {d_idx} - Instruction: {instruction.item()}")
                 else:
                     print(f"No valid forward match found for Height {h_idx}, Width {w_idx}. IP set to -1.")
-    
+                    
     def handle_backward_loops(self, instructions, **kwargs):
         
         # Initialize key variables
@@ -418,7 +416,7 @@ class Abiogenesis(object):
                     print(f"No valid backward match found for Height {h_idx}, Width {w_idx}. IP set to -1.")
                                                                     
     def iterate(self):
-                
+
         # get the current instruction for each instruction sequence using self.ip (instruction position)
         instructions = self.tape[torch.arange(self.tape.shape[0], device=self.device).unsqueeze(1),
                                  torch.arange(self.tape.shape[1], device=self.device),
@@ -441,9 +439,9 @@ class Abiogenesis(object):
         
         # Increment iteration counter
         self.iters += 1
-        
+            
     def mutate(self, rate):
-        
+
         # Generate a mask for mutation based on the rate
         mutation_mask = torch.rand(self.tape.shape, device=self.device) < rate
         
@@ -464,10 +462,13 @@ class Abiogenesis(object):
             'heads': self.heads,
             'device': self.device,
             'num_instructions' : self.num_instructions,
+            'iters' : self.iters,
             'reset_heads' : self.reset_heads,
+            'loop_condition' : self.loop_condition,
+            'loop_option' : self.loop_option,
         }
         torch.save(state, path)
-        
+                
     @classmethod
     def load(cls, path, device='cpu'):
         
@@ -478,15 +479,19 @@ class Abiogenesis(object):
         height, width, tape_len = state['tape'].shape
         
         # Create a new instance of the class with the loaded state
-        obj = cls(height=height, width=width, tape_len=tape_len, device=device)
+        obj = cls(height=height, 
+                  width=width, 
+                  tape_len=tape_len, 
+                  num_instructions=state.get('num_instructions', 64),
+                  device=device,
+                  reset_heads=state.get('reset_heads', True),
+                  loop_condition=state.get('loop_condition', 'value'),
+                  loop_option=state.get('loop_option', False))
         
         # Restore the state to the desired device
-        obj.tape = state['tape'].to(device)
-        obj.ip = state['ip'].to(device)
-        obj.heads = state['heads'].to(device)
-        obj.num_instructions = state.get('num_instructions', 256)
-        obj.reset_heads = state.get('reset_heads', True)
-        obj.iters = state.get('iters', 0)
+        for key in ['tape', 'ip', 'heads']:
+            setattr(obj, key, state[key].to(device))
+        setattr(obj, 'iters', state.get('iters', 0))
         
         return obj
         
@@ -521,7 +526,7 @@ class Abiogenesis(object):
         cv2.imwrite(path, image_array_np)
         
     def to(self, device):
-        assert str(device).isin(['cpu', 'cuda'])
+        assert str(device) in ['cpu', 'cuda']
         self.device = device
         self.tape = self.tape.to(device)
         self.ip = self.ip.to(device)
@@ -541,10 +546,10 @@ def parse_arguments():
     parser.add_argument('--results_path', type=str, default='results/run_0', help='Path to save results (default: results/run_0)')
     parser.add_argument('--image_save_interval', type=int, default=500, help='Interval to save images (default: 500 iterations)')
     parser.add_argument('--state_save_interval', type=int, default=100000, help='Interval to save states (default: 100000 iterations)')
-    parser.add_argument('--stateful_heads', type=bool, default=False, help='Determines if heads maintain their state or reset upon invalid instruction')
+    parser.add_argument('--stateful_heads', action='store_true', help='Determines if heads maintain their state or reset upon invalid instruction')
     parser.add_argument('--load', type=str, default='', help='Path to saved simulation')
     parser.add_argument('--loop_condition', type=str, default='value', help='Loops are conditioned on 0 (value) or matching head values (match)')
-    parser.add_argument('--loop_option', type=bool, default=False, help='Adds an additional set of loop instructions with opposite conditions')
+    parser.add_argument('--loop_option', action='store_true', help='Adds an additional set of loop instructions with opposite conditions')
     return parser.parse_args()
 
 def main():
@@ -576,15 +581,16 @@ def main():
         
     # Run the simulation
     start_iter = env.iters
-    for i in range(start_iter, args.num_sims+1):
-        env.iterate()
-        if args.mutate_rate and not i % args.depth:
-             env.mutate(args.mutate_rate)
-        if not i % args.image_save_interval:
-            print(f"Iteration {i}")
-            env.visualize(os.path.join(img_path, f'{i:09}.png'))
-        if not i % args.state_save_interval:
-            env.save(os.path.join(states_path, f'{i:09}.p'))               
+    with torch.no_grad():
+        for i in range(start_iter, args.num_sims+1):
+            env.iterate()
+            if args.mutate_rate and not i % args.depth:
+                 env.mutate(args.mutate_rate)
+            if not i % args.image_save_interval:
+                print(f"Iteration {i}")
+                env.visualize(os.path.join(img_path, f'{i:09}.png'))
+            if not i % args.state_save_interval:
+                env.save(os.path.join(states_path, f'{i:09}.p'))               
         
 if __name__ == "__main__":
     main()
