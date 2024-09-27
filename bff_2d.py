@@ -17,95 +17,251 @@ class Abiogenesis(object):
                  device='cpu', 
                  reset_heads=True,
                  loop_condition='value',
-                 loop_option=False):
+                 loop_option=False,
+                 no_copy=False,
+                 seed=0,
+                 color_scheme='default'):
         assert tape_len**0.5 % 1 == 0
-        assert loop_condition in ['value', 'match']
+        assert loop_condition in ['value', 'match', 'both']
         self.reset_heads = reset_heads
         self.loop_condition = loop_condition
         self.loop_option = loop_option
+        self.no_copy = no_copy
         self.device = device
+        self.seed = seed
         self.num_instructions = num_instructions
         self.tape = torch.randint(low=0, high=num_instructions, size=(height, width, tape_len), dtype=torch.int32, device=device)
         self.ip = torch.zeros((height, width), device=device).long()
         self.heads = torch.ones((height, width, 2, 3), dtype=torch.int64, device=device)
         self.heads[:, :, :, -1] = 0
+        
         self.generate_instruction_sets()
+        
+        self.color_scheme = color_scheme
+        self.default_color_scheme()
+        if seed:
+            self.seed_sim(seed)
+        
         self.iters = 0
             
+    
+    def seed_sim(self, num_seeds):
+        
+        move_head1_xy = []
+        enter_loop = []
+        crement = []
+        exit_loop = []
+        copy = False
+        move_head0_z = False
+        move_head1_z = False
+        enter_match = False
+        exit_match = False
+        
+        for instruction, info in self.instruction_set.items():
+            iv = info[1]['instruction_value']
+            if 'head1_dim0' in instruction:
+                move_head1_xy.append(iv)
+            if 'head1_dim1' in instruction:
+                move_head1_xy.append(iv)
+            if 'skip' in instruction and '==' in instruction:
+                enter_loop.append(iv)
+                if 'head1' in instruction:
+                    enter_match = iv
+            if 'head0_dim2_move1' in instruction:
+                move_head0_z = iv
+            if 'head1_dim2_move1' in instruction:
+                move_head1_z = iv
+            if 'copy_head0' in instruction:
+                copy = iv
+            if 'repeat' in instruction and '!=' in instruction:
+                exit_loop.append(iv)
+                if 'head1' in instruction:
+                    exit_match = iv
+            if 'value' in instruction:
+                crement.append(iv)
+                    
+        if self.no_copy and self.loop_condition in ['match', 'both']:
+            replicators = np.zeros((num_seeds, 8)).astype('uint8')
+            replicators[:, 0] = np.random.choice(move_head1_xy, num_seeds)
+            replicators[:, 1] = np.random.choice(enter_loop, num_seeds)
+            replicators[:, 2] = enter_match
+            replicators[:, 3] = np.random.choice(crement, num_seeds)
+            replicators[:, 4] = exit_match
+            replicators[:, 5] = move_head1_z
+            replicators[:, 6] = move_head0_z
+            replicators[:, 7] = np.random.choice(exit_loop, num_seeds)
+            
+        elif not self.no_copy:
+            replicators = np.zeros((num_seeds, 6)).astype('uint8')
+            replicators[:, 0] = np.random.choice(move_head1_xy, num_seeds)
+            replicators[:, 1] = np.random.choice(enter_loop, num_seeds)
+            replicators[:, 2] = copy
+            replicators[:, 3] = move_head1_z
+            replicators[:, 4] = move_head0_z
+            replicators[:, 5] = np.random.choice(exit_loop, num_seeds)
+        else:
+            print("Unable to create replicator when --no_copy is true and --loop_condition is not 'match' or 'both'")
+            return
+        
+        replicators = torch.tensor(replicators, device=self.device)
+        size = replicators.size(1)
+        
+        xs = torch.randint(low=0, high=self.tape.size(0), size=(num_seeds,), 
+                               device=self.device)
+        ys = torch.randint(low=0, high=self.tape.size(1), size=(num_seeds,), device=self.device)
+        zs = torch.randint(low=0, high=self.tape.size(2)-size, size=(num_seeds,), device=self.device)
+        print('seeding simulation...')
+        cnt = 0
+        for x, y, z in zip(xs, ys, zs):
+            self.tape[x, y, z:z+size] = replicators[cnt]
+            cnt += 1
+        
+        
+    def default_color_scheme(self):
+        
+        if self.color_scheme == 'default':
+            self.color_set = torch.linspace(0, 255, self.num_instructions, dtype=torch.uint8)
+            self.color_set = self.color_set.unsqueeze(1).repeat(1, 3)
+            for instruction, info in self.instruction_set.items():
+                if 'skip' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([0, 255, 0], dtype=torch.uint8)
+                elif 'repeat' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([255, 0, 0], dtype=torch.uint8)
+                elif 'move' in instruction:
+                    if 'head0' in instruction:
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([0, 255, 255], dtype=torch.uint8)
+                    elif 'head1' in instruction:
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([0, 0, 255], dtype=torch.uint8)
+                elif 'value-' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([255, 153, 153], dtype=torch.uint8)
+                elif 'value' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([153, 255, 153], dtype=torch.uint8)
+                elif 'copy_head0' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([255, 255, 0], dtype=torch.uint8)
+                elif 'copy_head1' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([255, 0, 255], dtype=torch.uint8)
+                    
+        elif self.color_scheme == 'random':
+            colors = np.array([[0,0,0],
+                    [0,0,255],
+                    [0,255,0],
+                    [0,255,255],
+                    [255,0,0],
+                    [255,0,255],
+                    [255,255,0],
+                    [255,255,255],
+                    [255, 153, 153],
+                    [153, 255, 153],
+                    [50,50,50],
+                    [100,100,100],
+                    [150,150,150],
+                    [200,200,200],
+                    ])
+            
+            colors = colors[np.random.choice(np.arange(len(colors)),
+                                      size=self.num_instructions)]
+            self.color_set = torch.tensor(colors, dtype=torch.uint8)
+            
+        elif self.color_scheme == 'dark':
+            self.color_set = torch.linspace(50, 0, self.num_instructions, dtype=torch.uint8)
+            self.color_set = self.color_set.unsqueeze(1).repeat(1, 3)
+            self.color_set[0] = torch.tensor([255, 255, 255], dtype=torch.uint8)
+            for instruction, info in self.instruction_set.items():
+                if 'skip' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([0, 255, 0], dtype=torch.uint8)
+                elif 'repeat' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([255, 69, 0], dtype=torch.uint8)
+                elif 'move' in instruction:
+                    if 'head0' in instruction:
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([0, 255, 255], dtype=torch.uint8)
+                    elif 'head1' in instruction:
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([75, 0, 130], dtype=torch.uint8)
+                elif 'value-' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([255, 105, 180], dtype=torch.uint8)
+                elif 'value' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([144, 238, 144], dtype=torch.uint8)
+                elif 'copy_head0' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([255, 215, 0], dtype=torch.uint8)
+                elif 'copy_head1' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([138, 43, 226], dtype=torch.uint8)
+        
+        elif isinstance(self.color_scheme, dict):
+            for key, color in self.color_scheme:
+                if isinstance(key, str) and isinstance(color, list) and len(color) == 3 and all([isinstance(i, int) for i in color]):
+                    for instruction, info in self.instruction_set.items():
+                        if key in instruction:
+                            self.color_set[info[1]['instruction_value']] = torch.tensor(color, dtype=torch.uint8) 
+        
+        
+        
 
     def generate_instruction_sets(self):   
 
         # Set instruction logic kwargs and precompute colors for visualization
           
         instruction_set = {}
-        color_set = {0 : [0, 0, 0]}
         
         instruction_value = 1
-        enter_loop_instruction_values = [instruction_value, instruction_value+2] if self.loop_option else [instruction_value]
-        exit_loop_instruction_values = [instruction_value+1, instruction_value+3] if self.loop_option else [instruction_value+1]
-        instruction_set[instruction_value] = (self.handle_forward_loops, {'instruction_value' : instruction_value, 
-                                                          'enter_loop_instruction_values' : enter_loop_instruction_values, 
-                                                          'exit_loop_instruction_values' : exit_loop_instruction_values,
-                                                          'debug' : False})
-        color_set[instruction_value] = [0, 255, 0]
-        instruction_value += 1
-        instruction_set[instruction_value] = (self.handle_backward_loops, {'instruction_value' : instruction_value, 
-                                                          'enter_loop_instruction_values' : enter_loop_instruction_values, 
-                                                          'exit_loop_instruction_values' : exit_loop_instruction_values,
-                                                          'debug' : False})
-        color_set[instruction_value] = [255, 0, 0]
-        instruction_value += 1
-        
+        num_loops = 1 + (self.loop_option or (self.loop_condition == 'both')) + 2*(self.loop_option and (self.loop_condition == 'both'))
+        enter_loop_instruction_values = [i + instruction_value for i in range(num_loops)]
+        exit_loop_instruction_values = [i + num_loops for i in enter_loop_instruction_values]
+        loop_conditions = ['value', 'match'] if self.loop_condition == 'both' else [self.loop_condition]
+        loop_conditions = loop_conditions * (1 + self.loop_option)
+        loop_options = [False] * (1 + (self.loop_condition == 'both'))
         if self.loop_option:
-            instruction_set[instruction_value] = (self.handle_forward_loops, {'instruction_value' : instruction_value, 
+            loop_options += [True] * (1 + (self.loop_condition == 'both'))
+            
+        for i in range(num_loops):
+            loop_string = 'loop_skip_if_head0'
+            loop_string += '_!=' if self.loop_option else '_=='
+            loop_string += '_0' if loop_conditions[i] == 'value' else '_head1'
+
+            instruction_set[loop_string] = (self.handle_forward_loops, {'instruction_value' : enter_loop_instruction_values[i], 
+                                                              'loop_condition' : loop_conditions[i],
                                                               'enter_loop_instruction_values' : enter_loop_instruction_values, 
                                                               'exit_loop_instruction_values' : exit_loop_instruction_values,
                                                               'debug' : False,
-                                                              'option' : self.loop_option})
-            color_set[instruction_value] = [0, 255, 0]
+                                                              'option' : loop_options[i]})
             instruction_value += 1
-            instruction_set[instruction_value] = (self.handle_backward_loops, {'instruction_value' : instruction_value, 
+            loop_string = 'loop_repeat_if_head0'
+            loop_string += '_==' if self.loop_option else '_!='
+            loop_string += '_0' if loop_conditions[i] == 'value' else '_head1'
+            
+            instruction_set[loop_string] = (self.handle_backward_loops, {'instruction_value' : exit_loop_instruction_values[i],
+                                                              'loop_condition' : loop_conditions[i],
                                                               'enter_loop_instruction_values' : enter_loop_instruction_values, 
                                                               'exit_loop_instruction_values' : exit_loop_instruction_values,
                                                               'debug' : False,
-                                                              'option' : self.loop_option})
-            color_set[instruction_value] = [255, 0, 0]
+                                                              'option' : loop_options[i]})
             instruction_value += 1
         
         for head_index in [0, 1]:
             for dim in [0, 1, 2]:
                 for direction in [-1, 1]:
-                    instruction_set[instruction_value] = (self.update_head_positions, {'instruction_value' : instruction_value, 
+                    instruction_set[f'head{head_index}_dim{dim}_move{direction}'] = (self.update_head_positions, {'instruction_value' : instruction_value, 
                                                                       'head_index' : head_index,
                                                                       'dim' : dim,
                                                                       'direction' : direction})
-                    color_set[instruction_value] = [0, 255, 255] if not head_index else [0, 0, 255]
                     instruction_value += 1
         
         for head_index in [0, 1]:
             for increment in [-1, 1]:
-                instruction_set[instruction_value] = (self.update_tape, {'instruction_value' : instruction_value,
+                instruction_set[f'head{head_index}_value{increment}'] = (self.update_tape, {'instruction_value' : instruction_value,
                                                                          'head_index' : head_index, 
                                                                          'increment' : increment})
-                color_set[instruction_value] = [255, 153, 153] if increment == -1 else [153, 255, 153]
                 instruction_value += 1
-       
-        instruction_set[instruction_value] = (self.copy_tape_values, {'instruction_value' : instruction_value,
-                                                                 'src_head_index' : 0, 
-                                                                 'dest_head_index' : 1})
-        color_set[instruction_value] = [255, 255, 0]
-        instruction_value += 1
-        instruction_set[instruction_value] = (self.copy_tape_values, {'instruction_value' : instruction_value,
-                                                                 'src_head_index' : 1, 
-                                                                 'dest_head_index' : 0})
-        color_set[instruction_value] = [255, 0, 255]
-        instruction_value += 1
+        
+        if not self.no_copy:
+            instruction_set['copy_head0_to_head1'] = (self.copy_tape_values, {'instruction_value' : instruction_value,
+                                                                     'src_head_index' : 0, 
+                                                                     'dest_head_index' : 1})
+            instruction_value += 1
+            instruction_set['copy_head1_to_head0'] = (self.copy_tape_values, {'instruction_value' : instruction_value,
+                                                                     'src_head_index' : 1, 
+                                                                     'dest_head_index' : 0})
+            instruction_value += 1
         
         self.instruction_set = instruction_set
-        self.color_set = torch.linspace(0, 255, self.num_instructions, dtype=torch.uint8)
-        self.color_set = self.color_set.unsqueeze(1).repeat(1, 3)
-        for instr, color in color_set.items():
-            self.color_set[instr] = torch.tensor(color, dtype=torch.uint8)
         
     def update_head_positions(self, instructions,  **kwargs):
         
@@ -242,6 +398,7 @@ class Abiogenesis(object):
         
         # Extract key variables
         instruction_value = kwargs.get('instruction_value')
+        loop_condition = kwargs.get('loop_condition')
         enter_loop_instruction_values = kwargs.get('enter_loop_instruction_values')
         exit_loop_instruction_values = kwargs.get('exit_loop_instruction_values')
         debug = kwargs.get('debug')
@@ -264,12 +421,12 @@ class Abiogenesis(object):
         head0_width_indices = (enter_indices[1] + enter_heads[:, 0, 1] - 1) % self.tape.shape[1]
         head0_depth_indices = enter_heads[:, 0, 2]
         
-        if self.loop_condition == 'value':
+        if loop_condition == 'value':
             if option:
                 enter_condition_met = self.tape[head0_height_indices, head0_width_indices, head0_depth_indices] != 0
             else:
                 enter_condition_met = self.tape[head0_height_indices, head0_width_indices, head0_depth_indices] == 0
-        elif self.loop_condition == 'match':
+        elif loop_condition == 'match':
             head1_height_indices = (enter_indices[0] + enter_heads[:, 1, 0] - 1) % self.tape.shape[0]
             head1_width_indices = (enter_indices[1] + enter_heads[:, 1, 1] - 1) % self.tape.shape[1]
             head1_depth_indices = enter_heads[:, 1, 2]
@@ -327,6 +484,7 @@ class Abiogenesis(object):
         
         # Initialize key variables
         instruction_value = kwargs.get('instruction_value')
+        loop_condition = kwargs.get('loop_condition')
         enter_loop_instruction_values = kwargs.get('enter_loop_instruction_values')
         exit_loop_instruction_values = kwargs.get('exit_loop_instruction_values')
         debug = kwargs.get('debug')
@@ -349,12 +507,12 @@ class Abiogenesis(object):
         head0_width_indices = (exit_indices[1] + exit_heads[:, 0, 1] - 1) % self.tape.shape[1]
         head0_depth_indices = exit_heads[:, 0, 2]
         
-        if self.loop_condition == 'value':
+        if loop_condition == 'value':
             if option:
                 exit_condition_met = self.tape[head0_height_indices, head0_width_indices, head0_depth_indices] == 0
             else:
                 exit_condition_met = self.tape[head0_height_indices, head0_width_indices, head0_depth_indices] != 0
-        elif self.loop_condition == 'match':
+        elif loop_condition == 'match':
             head1_height_indices = (exit_indices[0] + exit_heads[:, 1, 0] - 1) % self.tape.shape[0]
             head1_width_indices = (exit_indices[1] + exit_heads[:, 1, 1] - 1) % self.tape.shape[1]
             head1_depth_indices = exit_heads[:, 1, 2]
@@ -466,6 +624,7 @@ class Abiogenesis(object):
             'reset_heads' : self.reset_heads,
             'loop_condition' : self.loop_condition,
             'loop_option' : self.loop_option,
+            'no_copy' : self.no_copy
         }
         torch.save(state, path)
                 
@@ -486,7 +645,8 @@ class Abiogenesis(object):
                   device=device,
                   reset_heads=state.get('reset_heads', True),
                   loop_condition=state.get('loop_condition', 'value'),
-                  loop_option=state.get('loop_option', False))
+                  loop_option=state.get('loop_option', False),
+                  no_copy=state.get('no_copy', False))
         
         # Restore the state to the desired device
         for key in ['tape', 'ip', 'heads']:
@@ -494,6 +654,12 @@ class Abiogenesis(object):
         setattr(obj, 'iters', state.get('iters', 0))
         
         return obj
+    
+    def reset(self):
+        self.tape[:] = torch.randint_like(self.tape, low=0, high=self.num_instructions)
+        self.ip[:] = 0
+        self.heads[:] = 1
+        self.heads[:, :, :, -1] = 0
         
     def visualize(self, path):
     
@@ -550,6 +716,9 @@ def parse_arguments():
     parser.add_argument('--load', type=str, default='', help='Path to saved simulation')
     parser.add_argument('--loop_condition', type=str, default='value', help='Loops are conditioned on 0 (value) or matching head values (match)')
     parser.add_argument('--loop_option', action='store_true', help='Adds an additional set of loop instructions with opposite conditions')
+    parser.add_argument('--no_copy', action='store_true', help='Removes copy operations from instruction set')
+    parser.add_argument('--seed', type=int, default=0, help='Number of hand-coded replicators to seed into the simulation')
+    parser.add_argument('--color_scheme', type=str, default='default', help='Color scheme for visualizations')
     return parser.parse_args()
 
 def main():
@@ -577,20 +746,26 @@ def main():
                           device=args.device, 
                           reset_heads=not args.stateful_heads,
                           loop_condition=args.loop_condition,
-                          loop_option=args.loop_option)
-        
+                          loop_option=args.loop_option,
+                          no_copy=args.no_copy,
+                          seed=args.seed,
+                          color_scheme=args.color_scheme)
+    print(env.instruction_set)
+
     # Run the simulation
     start_iter = env.iters
     with torch.no_grad():
         for i in range(start_iter, args.num_sims+1):
-            env.iterate()
+            
             if args.mutate_rate and not i % args.depth:
                  env.mutate(args.mutate_rate)
             if not i % args.image_save_interval:
                 print(f"Iteration {i}")
                 env.visualize(os.path.join(img_path, f'{i:09}.png'))
             if not i % args.state_save_interval:
-                env.save(os.path.join(states_path, f'{i:09}.p'))               
+                env.save(os.path.join(states_path, f'{i:09}.p'))    
+                
+            env.iterate()
         
 if __name__ == "__main__":
     main()
