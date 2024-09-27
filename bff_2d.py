@@ -173,15 +173,15 @@ class Abiogenesis(object):
                     self.color_set[info[1]['instruction_value']] = torch.tensor([255, 69, 0], dtype=torch.uint8)
                 elif 'move' in instruction:
                     if 'head0' in instruction:
-                        self.color_set[info[1]['instruction_value']] = torch.tensor([0, 255, 255], dtype=torch.uint8)
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([0, 128, 128], dtype=torch.uint8)
                     elif 'head1' in instruction:
-                        self.color_set[info[1]['instruction_value']] = torch.tensor([75, 0, 130], dtype=torch.uint8)
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([48, 25, 52], dtype=torch.uint8)
                 elif 'value-' in instruction:
                     self.color_set[info[1]['instruction_value']] = torch.tensor([255, 105, 180], dtype=torch.uint8)
                 elif 'value' in instruction:
                     self.color_set[info[1]['instruction_value']] = torch.tensor([144, 238, 144], dtype=torch.uint8)
                 elif 'copy_head0' in instruction:
-                    self.color_set[info[1]['instruction_value']] = torch.tensor([255, 215, 0], dtype=torch.uint8)
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([0, 255, 255], dtype=torch.uint8)
                 elif 'copy_head1' in instruction:
                     self.color_set[info[1]['instruction_value']] = torch.tensor([138, 43, 226], dtype=torch.uint8)
         
