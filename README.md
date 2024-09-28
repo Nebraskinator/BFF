@@ -81,11 +81,11 @@ python bff_2d.py [OPTIONS]
 - `--state_save_interval`: Interval (in iterations) to save the simulation state (default: 100,000).
 - `--stateful_heads`: Only allow heads to reset position when executing the terminal instruction (default: False).
 - `--load`: Resume run from checkpoint. Must enter a path to a valid checkpoint (default: '').
-- `--loop_condition`: Condition loop on 0 at head0 'value' or matching the values at both heads 'match' (default: 'value')
+- `--loop_condition`: Condition loop on 0 at head0 'value' or matching the values at both heads 'match' (default: `value`)
 - `--loop_option`: Adds an additional set of loop instructions with opposite conditions (default: False)
 - `--no_copy`: Removes copy operations from instruction set (default: False)
 - `--seed`: Number of hand-coded replicators to seed into the simulation (default: 0)
-- `--color_scheme`: 'default', 'random', or 'dark' color scheme for visualizations (default: 'default')
+- `--color_scheme`: `default`, `random`, or `dark` color scheme for visualizations (default: `default`)
 
 ### Example Usage
 
