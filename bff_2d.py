@@ -624,7 +624,8 @@ class Abiogenesis(object):
             'reset_heads' : self.reset_heads,
             'loop_condition' : self.loop_condition,
             'loop_option' : self.loop_option,
-            'no_copy' : self.no_copy
+            'no_copy' : self.no_copy,
+            'color_scheme' : self.color_scheme,
         }
         torch.save(state, path)
                 
@@ -646,7 +647,8 @@ class Abiogenesis(object):
                   reset_heads=state.get('reset_heads', True),
                   loop_condition=state.get('loop_condition', 'value'),
                   loop_option=state.get('loop_option', False),
-                  no_copy=state.get('no_copy', False))
+                  no_copy=state.get('no_copy', False),
+                  color_scheme=state.get('color_scheme', 'default'))
         
         # Restore the state to the desired device
         for key in ['tape', 'ip', 'heads']:
