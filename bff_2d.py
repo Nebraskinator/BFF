@@ -5,6 +5,7 @@ Created on Wed Aug 28 19:57:17 2024
 
 import os
 import argparse
+import configparser
 import torch
 import cv2
 import numpy as np
@@ -862,6 +863,7 @@ class Abiogenesis(object):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Run Abiogenesis simulation with customizable parameters.")
+    parser.add_argument('--config', type=str, help='Path to configuration file')
     parser.add_argument('--height', type=int, default=128, help='Height of the tape (default: 128)')
     parser.add_argument('--width', type=int, default=256, help='Width of the tape (default: 256)')
     parser.add_argument('--sequence_length', type=int, default=64, help='sequence_length of the tape (default: 64)')
@@ -930,8 +932,44 @@ def make_video(image_path, resize_factor=1, framerate=15):
     video_writer.release()
     print(f"Video saved as {output_video_path}")
 
+def load_config_file(config_path, args):
+    config = configparser.ConfigParser()
+    config.read(config_path)
+
+    # Convert the values into the proper types for simulation
+    return {
+        'height': config.getint('Simulation', 'height', fallback=args.height),
+        'width': config.getint('Simulation', 'width', fallback=args.width),
+        'sequence_length': config.getint('Simulation', 'sequence_length', fallback=args.sequence_length),
+        'num_instructions': config.getint('Simulation', 'num_instructions', fallback=args.num_instructions),
+        'num_heads': config.getint('Simulation', 'num_heads', fallback=args.num_heads),
+        'head_range': config.getint('Simulation', 'head_range', fallback=args.head_range),
+        'device': config.get('Simulation', 'device', fallback=args.device),
+        'num_sims': config.getint('Simulation', 'num_sims', fallback=args.num_sims),
+        'mutate_rate': config.getfloat('Simulation', 'mutate_rate', fallback=args.mutate_rate),
+        'results_path': config.get('Simulation', 'results_path', fallback=args.results_path),
+        'image_save_interval': config.getint('Simulation', 'image_save_interval', fallback=args.image_save_interval),
+        'state_save_interval': config.getint('Simulation', 'state_save_interval', fallback=args.state_save_interval),
+        'head_reset': config.get('Simulation', 'head_reset', fallback=args.head_reset),
+        'loop_condition': config.get('Simulation', 'loop_condition', fallback=args.loop_condition),
+        'loop_options': config.getint('Simulation', 'loop_options', fallback=args.loop_options),
+        'no_copy': config.getboolean('Simulation', 'no_copy', fallback=args.no_copy),
+        'seed': config.getint('Simulation', 'seed', fallback=args.seed),
+        'color_scheme': config.get('Simulation', 'color_scheme', fallback=args.color_scheme),
+        'video': config.getboolean('Simulation', 'video', fallback=args.video),
+        'video_framerate' : config.getint('Simulation', 'video_framerate', fallback=args.video_framerate),
+        'video_resize': config.getfloat('Simulation', 'video_resize', fallback=args.video_resize),
+    }
+
 def main():
     args = parse_arguments()
+
+    if args.config and os.path.exists(args.config):
+        config_values = load_config_file(args.config, args)
+
+        # Override args with config file values, if config is provided
+        for key, value in config_values.items():
+            setattr(args, key, value)    
 
     # Create the results path if it does not exist
     os.makedirs(args.results_path, exist_ok=True)
