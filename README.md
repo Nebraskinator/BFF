@@ -59,69 +59,126 @@ Make sure you have the required packages installed. You can install them using p
 pip install torch numpy opencv-python
 ```
 
-## Usage
+#### Command Line Usage
 
-Run the simulation from the command line with customizable parameters:
+You can run the simulation directly from the command line using a configuration file or by specifying parameters via command-line arguments. Here are some basic examples of how to use the command-line interface:
+
+1. **Run a Simulation with Default Parameters:**
 
 ```bash
-python bff_2d.py [OPTIONS]
+python bff_2d.py
 ```
+
+2. **Specify Custom Parameters in the Command Line:**
+
+```bash
+python bff_2d.py --height 128 --width 256 --sequence_length 64 --num_heads 3 --num_sims 1000000 --mutate_rate 0.00001 --results_path results/custom_run
+```
+
+3. **Load a Configuration File:**
+
+```bash
+python bff_2d.py --config path/to/config.ini
+```
+
+#### Instruction Set
+
+The simulation supports a rich set of customizable instructions that control both the internal behavior of the sequences and their interactions with neighboring sequences:
+
+- **Movement Instructions:**
+  - The read/write heads can move along three dimensions within a configurable range. Each head can be moved by a unit step in either direction. These instructions enable heads to navigate their local environment, influencing which instructions or data they modify.
+  - Altering the number of heads and their maximum range of travel:
+    ```bash
+    python abiogenesis.py --num_heads 4 --head_range 2
+    ```
+  - **Instruction Example:** `head0_dim1_move+1` moves the first head one step in the positive `y` direction.
+
+- **Value Modification:**
+  - Heads can directly modify the value at their current position by incrementing or decrementing the instruction stored there. These modifications allow heads to alter their own sequence or nearby sequences, creating potential mutations or changes in behavior.
+  - **Instruction Example:** `head1_value-1` decrements the value at the position of the second head by one.
+
+- **Looping Mechanisms:**
+  - Sequences can create conditional loops based on the values encountered by the heads. Loops can be conditioned either on the presence of a specific value (e.g., zero) or on matching values between two heads. This flexibility allows for complex behaviors, such as conditional repetition or decision-making based on local data.
+  - Example command to alter looping conditions and number of conditions:
+    ```bash
+    python abiogenesis.py --loop_condition both --loop_options 5
+    ```
+  - **Instruction Example:** `loop_skip_if_head0_==_0` skips the loop if head 0 encounters a value of zero.
+
+- **Copying Between Heads:**
+  - One of the most powerful instructions in the simulation is the **copy** operation, where the value at one head can be copied to the position of another head. This operation allows sequences to duplicate instructions or share information between different parts of the grid, driving the replication process.
+  - Example command to run a simulation without copy instructions:
+    ```bash
+    python abiogenesis.py --no_copy True
+    ```
+  - **Instruction Example:** `copy_head0_to_head1` copies the value at head 0’s position to head 1’s position.
+
+- **No-Operation (NOP):**
+  - In addition to active instructions, the grid can include "no-op" values, which are essentially placeholders that can store data without causing any action to occur. These no-ops can be dynamically changed by heads as needed.
+  - The number of no-ops is equal to the num_instructions value minus the number of operative instructions. The number of operative instructions depends on the number of heads and the number of loop options.
+    ```bash
+    python abiogenesis.py --num_instructions 128
+    ```
+
+#### Other Simulation Features
+
+- **Head Reset and Error Handling:**
+  - The behavior of the read/write heads can be customized to either reset to a home position after a crash or continue executing, simulating different strategies for error handling in evolving systems. Options include resetting on termination, on encountering invalid instructions, or never resetting.
+  - Example command:
+    ```bash
+    python abiogenesis.py --head_reset never
+    ```
+
+- **Mutation Mechanism:**
+  - Random mutations can be introduced into the instruction set at a configurable rate, simulating the natural variability seen in biological systems. Mutations introduce changes that may either hinder or enhance a sequence's ability to replicate.
+  - Example command to set mutation rates:
+    ```bash
+    python abiogenesis.py --mutate_rate 0.0001
+    ```
+
+- **Seeding Hand-Coded Sequences:**
+  - The simulation allows for the seeding of hand-coded replicators, providing the opportunity to test the stability and evolution of known replication patterns within the simulated environment.
+  - Example command to seed hand-coded replicators:
+    ```bash
+    python abiogenesis.py --seed 500
+    ```
+
+- **Visual and Video Output:**
+  - At specified intervals, the simulation generates visualizations showing the current state of the grid. A video can be created at the end of the simulation to observe how self-replicating sequences evolve over time.
+  - Example command to create a video after the simulation:
+    ```bash
+    python abiogenesis.py --video --video_framerate 30 --video_resize 0.5
+    ```
 
 ### Command-Line Arguments
 
-- `--height`: Height of the tape (default: 128).
-- `--width`: Width of the tape (default: 256).
-- `--depth`: Depth of the tape (default: 64).
+- `--config`: Path to configuration file.
+- `--height`: Number of instruction sequences in height dimension (default: 128).
+- `--width`: Number of instruction sequences in width dimension (default: 256).
+- `--sequence_length`: Length of each instruction sequence (default: 64).
 - `--num_instructions`: Number of unique instructions (default: 64).
+- `--num_heads`: Number of read-write heads for each instruction sequence (default: 2).
+- `--head_range`: Maximum travel range in height, width dimensions for each head (default: 1).
 - `--device`: Device to run the simulation on (`cpu` or `cuda`, default: `cuda`).
 - `--num_sims`: Number of simulation iterations (default: 1,000,000).
 - `--mutate_rate`: Mutation rate during simulation (default: 0.0).
 - `--results_path`: Path to save results, including images and state files (default: `results/run_0`).
 - `--image_save_interval`: Interval (in iterations) to save visualizations as images (default: 500).
 - `--state_save_interval`: Interval (in iterations) to save the simulation state (default: 100,000).
-- `--stateful_heads`: Only allow heads to reset position when executing the terminal instruction (default: False).
+- `--head_reset`: Set conditions for resetting the heads to their home positions upon termination and crash (default: 'always).
 - `--load`: Resume run from checkpoint. Must enter a path to a valid checkpoint (default: '').
-- `--loop_condition`: Condition loop on 0 at head0 'value' or matching the values at both heads 'match' (default: `value`)
-- `--loop_option`: Adds an additional set of loop instructions with opposite conditions (default: False)
-- `--no_copy`: Removes copy operations from instruction set (default: False)
+- `--loop_condition`: Condition loop on head reading 0 `value` or matching the read values at two heads `match` (default: `value`)
+- `--loop_options`: Sets the number of different loop logic conditions allowed (default: 1)
+- `--no_copy`: Removes copy operations from instruction set (default: `False`)
 - `--seed`: Number of hand-coded replicators to seed into the simulation (default: 0)
-- `--color_scheme`: `default`, `random`, or `dark` color scheme for visualizations (default: `default`)
+- `--color_scheme`: Color scheme for visualizations: `default` `random` `dark` `pastel` `neon` (default: `default`)
+- `--video`: Save a video of the simulation upon completion (default: `False`)
+- `--video_framerate`: Sets the framerate for the video (default: 15)
+- `--video_resize`: Resizes the video compared to the saved image sizes (default: 1.)
 
-### Example Usage
 
-1. **Run the simulation on GPU with default parameters:**
 
-    ```bash
-    python bff_2d.py
-    ```
-
-2. **Run the simulation on CPU with a custom mutation rate and save results to a specified path:**
-
-    ```bash
-    python bff_2d.py --device cpu --mutate_rate 0.001 --results_path results/run_1
-    ```
-
-3. **Set the height, width, depth of the tape and run 5 million iterations:**
-
-    ```bash
-    python bff_2d.py --height 64 --width 128 --depth 32 --num_sims 5000000
-    ```
-
-4. **Save images every 1000 iterations and states every 200,000 iterations:**
-
-    ```bash
-    python bff_2d.py --image_save_interval 1000 --state_save_interval 200000
-    ```
-
-### Output Directory Structure
-
-If a results path is specified (e.g., `results/run_0`), the following subdirectories will be created automatically:
-
-- `img/`: Contains the PNG images generated during the simulation, with filenames zero-padded to 9 digits (e.g., `000000001.png`).
-- `states/`: Contains serialized state files of the simulation, saved as `.p` files with zero-padded filenames (e.g., `000000001.p`).
 
 ### Notes
 
-- The simulation supports CUDA acceleration, making it highly efficient on compatible GPUs.
-- Images and states are saved at user-specified intervals, allowing for checkpoints and visual analysis of the simulation's progress.
-- The tape system is fully parameterized, allowing for detailed control over simulation behavior and complexity.
+- The simulation supports CUDA acceleration.
