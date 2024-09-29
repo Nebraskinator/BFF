@@ -111,30 +111,82 @@ class Abiogenesis(object):
             self.color_set = torch.tensor(colors, dtype=torch.uint8)
             
         elif self.color_scheme == 'dark':
-            self.color_set = torch.linspace(50, 0, self.num_instructions, dtype=torch.uint8)
+            self.color_set = torch.linspace(40, 0, self.num_instructions, dtype=torch.uint8)
             self.color_set = self.color_set.unsqueeze(1).repeat(1, 3)
-            self.color_set[0] = torch.tensor([255, 255, 255], dtype=torch.uint8)
+            self.color_set[0] = torch.tensor([253, 246, 227], dtype=torch.uint8)  # Light background color (Solarized base3)
             for instruction, info in self.instruction_set.items():
                 if 'skip' in instruction:
-                    self.color_set[info[1]['instruction_value']] = torch.tensor([0, 255, 0], dtype=torch.uint8)
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([133, 153, 0], dtype=torch.uint8)  # Green
                 elif 'repeat' in instruction:
-                    self.color_set[info[1]['instruction_value']] = torch.tensor([255, 69, 0], dtype=torch.uint8)
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([220, 50, 47], dtype=torch.uint8)  # Red
                 elif 'move' in instruction:
                     h = int(instruction[4])
                     if h % 2:
-                        self.color_set[info[1]['instruction_value']] = torch.tensor([48, 25, 52], dtype=torch.uint8)
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([38, 139, 210], dtype=torch.uint8)  # Blue
                     else:
-                        self.color_set[info[1]['instruction_value']] = torch.tensor([0, 128, 128], dtype=torch.uint8)
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([42, 161, 152], dtype=torch.uint8)  # Cyan
                 elif 'value-' in instruction:
-                    self.color_set[info[1]['instruction_value']] = torch.tensor([255, 105, 180], dtype=torch.uint8)
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([211, 54, 130], dtype=torch.uint8)  # Magenta
                 elif 'value' in instruction:
-                    self.color_set[info[1]['instruction_value']] = torch.tensor([144, 238, 144], dtype=torch.uint8)
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([181, 137, 0], dtype=torch.uint8)  # Yellow
                 elif 'copy' in instruction:
                     h = int(instruction[9])
                     if h % 2:
-                        self.color_set[info[1]['instruction_value']] = torch.tensor([138, 43, 226], dtype=torch.uint8)
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([108, 113, 196], dtype=torch.uint8)  # Violet
                     else:
-                        self.color_set[info[1]['instruction_value']] = torch.tensor([0, 255, 255], dtype=torch.uint8)
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([42, 161, 152], dtype=torch.uint8)  # Cyan
+                        
+        elif self.color_scheme == 'pastel':
+            self.color_set = torch.linspace(200, 150, self.num_instructions, dtype=torch.uint8)
+            self.color_set = self.color_set.unsqueeze(1).repeat(1, 3)
+            self.color_set[0] = torch.tensor([255, 255, 255], dtype=torch.uint8)  # White for background
+            for instruction, info in self.instruction_set.items():
+                if 'skip' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([255, 105, 180], dtype=torch.uint8)  # Darker Light Pink
+                elif 'repeat' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([70, 130, 180], dtype=torch.uint8)  # Darker Light Blue
+                elif 'move' in instruction:
+                    h = int(instruction[4])
+                    if h % 2:
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([189, 183, 107], dtype=torch.uint8)  # Darker Light Yellow
+                    else:
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([124, 252, 0], dtype=torch.uint8)  # Darker Light Green
+                elif 'value-' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([250, 128, 114], dtype=torch.uint8)  # Darker Light Salmon
+                elif 'value' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([175, 238, 238], dtype=torch.uint8)  # Darker Light Cyan
+                elif 'copy' in instruction:
+                    h = int(instruction[9])
+                    if h % 2:
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([244, 164, 96], dtype=torch.uint8)  # Darker Light Orange
+                    else:
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([186, 85, 211], dtype=torch.uint8)  # Darker Light Purple  # Light Purple
+        
+        elif self.color_scheme == 'neon':
+            self.color_set = torch.linspace(30, 0, self.num_instructions, dtype=torch.uint8)
+            self.color_set = self.color_set.unsqueeze(1).repeat(1, 3)
+            self.color_set[0] = torch.tensor([0, 0, 0], dtype=torch.uint8)  # Black for background
+            for instruction, info in self.instruction_set.items():
+                if 'skip' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([0, 255, 127], dtype=torch.uint8)  # Neon Green
+                elif 'repeat' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([255, 20, 147], dtype=torch.uint8)  # Neon Pink
+                elif 'move' in instruction:
+                    h = int(instruction[4])
+                    if h % 2:
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([0, 191, 255], dtype=torch.uint8)  # Neon Blue
+                    else:
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([255, 255, 0], dtype=torch.uint8)  # Neon Yellow
+                elif 'value-' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([255, 69, 0], dtype=torch.uint8)  # Neon Orange
+                elif 'value' in instruction:
+                    self.color_set[info[1]['instruction_value']] = torch.tensor([127, 255, 0], dtype=torch.uint8)  # Bright Lime Green
+                elif 'copy' in instruction:
+                    h = int(instruction[9])
+                    if h % 2:
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([138, 43, 226], dtype=torch.uint8)  # Neon Purple
+                    else:
+                        self.color_set[info[1]['instruction_value']] = torch.tensor([0, 255, 255], dtype=torch.uint8)  # Bright Cyan  # Purple
         
         elif isinstance(self.color_scheme, dict):
             for key, color in self.color_scheme:
